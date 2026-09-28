@@ -1,0 +1,19 @@
+{
+  "name": "aylik_finans_paketi",
+  "description": "Seçilen dönem için yedek, finans kontrolü, Excel kalite kontrolü, indeks yenileme ve muhasebe dışa aktarımı üretir.",
+  "version": "1.0",
+  "parameters": ["donem"],
+  "steps": [
+    {"action": "database_backup"},
+    {"action": "finance_check"},
+    {"action": "workbook_quality_all"},
+    {"action": "refresh_index_all"},
+    {"action": "accounting_export"},
+    {"action": "management_summary"}
+  ],
+  "validation": {
+    "require_balanced_journals": true,
+    "require_zero_sync_queue": true,
+    "stop_on_workbook_failure": true
+  }
+}

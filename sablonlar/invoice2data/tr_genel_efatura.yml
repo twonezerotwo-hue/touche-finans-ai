@@ -1,0 +1,40 @@
+issuer: Türk e-Fatura
+keywords:
+  - FATURA
+  - Fatura No
+  - Fatura Tarihi
+fields:
+  issuer:
+    parser: regex
+    regex: '(?:Satıcı|SATICI|Tedarikçi|TEDARİKÇİ|Firma|FİRMA)\s*:?\s*([^\n]{2,120})'
+  supplier_vkn:
+    parser: regex
+    regex: '(?:VKN|Vergi Kimlik No|Vergi No)\s*:?\s*(\d{10})'
+  date:
+    parser: regex
+    regex: 'Fatura Tarihi\s*:?\s*(\d{2}[./-]\d{2}[./-]\d{4})'
+    type: date
+  invoice_number:
+    parser: regex
+    regex: 'Fatura No\s*:?\s*([A-Z0-9-]{6,32})'
+  amount:
+    parser: regex
+    regex: '(?:Ödenecek Tutar|Vergiler Dahil Toplam Tutar|Genel Toplam)\s*:?\s*([\d.]+,\d{2})'
+    type: float
+  amount_tax:
+    parser: regex
+    regex: '(?:Hesaplanan KDV|Toplam KDV)\s*:?\s*([\d.]+,\d{2})'
+    type: float
+required_fields:
+  - date
+  - amount
+  - invoice_number
+  - issuer
+options:
+  currency: TRY
+  decimal_separator: ','
+  date_formats:
+    - '%d.%m.%Y'
+    - '%d/%m/%Y'
+    - '%d-%m-%Y'
+  remove_whitespace: false

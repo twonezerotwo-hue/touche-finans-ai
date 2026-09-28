@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Financial and personal data - never commit
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.db
+*.db-*
+*.sqlite*
+*.log
+*.jsonl
+arsiv/
+firmalar/
+gelen_evrak/
+loglar/
+muhasebe_export/
+temp/
+veri/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
