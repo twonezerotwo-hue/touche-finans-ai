@@ -7,12 +7,17 @@
   <title>Touche Finans · Executive Intelligence</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/cfo.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><span class="mark">TH</span><div><strong>Touche Finans</strong><small>Executive Intelligence</small></div></div>
     <div class="header-actions"><span class="system-pill"><i></i> AI aktif</span><span id="headerDate" class="header-date"></span><button id="excelButton" type="button">Excel Merkezi</button><button id="remoteButton" type="button" hidden>Telefon erişimi</button></div>
   </header>
+
+  <nav id="cfoNav" class="cfo-nav" aria-label="CFO navigasyonu"></nav>
+
+  <section id="cfoApp" class="cfo-app" hidden aria-live="polite"></section>
 
   <main>
     <div hidden aria-hidden="true">
@@ -83,5 +88,7 @@
   <dialog id="governanceDialog" class="governance-dialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Yetki ve veri yönetişimi</p><h2>Kurumsal finans ayarları</h2><div class="governance-grid"><section><h3>Excel onayı</h3><p class="dialog-meta">İkili onay devre dışı. Excel’i değiştiren işlemler tek onay şifresiyle tamamlanır.</p><form id="approvalRuleForm" class="mini-form" hidden><input id="approvalRuleId" placeholder="Kural kodu"><select id="approvalActivity"><option value="*">Tüm faaliyetler</option></select><input id="approvalMin" type="number"><input id="approvalMax" type="number"><input id="approvalCount" type="number" value="1"><input id="approvalRoles" value="ONAYCI"><label><input id="approvalSeparation" type="checkbox"> Ayrı hazırlayan</label><button type="submit">Kuralı kaydet</button></form><div id="approvalRules" class="settings-list" hidden></div></section><section><h3>Hesap eşlemeleri</h3><form id="mappingForm" class="mini-form"><select id="mappingActivity" required></select><input id="mappingLocal" placeholder="Yerel hesap kodu" required><input id="mappingGroup" placeholder="Grup hesap kodu" required><button type="submit">Eşlemeyi kaydet</button></form><div id="accountMappings" class="settings-list"></div></section><section class="wide"><h3>Bekleyen banka mutabakatı</h3><div id="bankReconciliation" class="settings-list"></div></section></div></dialog>
   <dialog id="approvalPasswordDialog" class="approval-password-dialog"><form id="approvalPasswordForm"><p class="eyebrow">Güvenli Excel değişikliği</p><h2>Onay şifresini girin</h2><p class="dialog-meta">Doğru şifre girildiğinde taslak master Excel’e ve merkez finans defterine tek seferde yazılır.</p><label for="approvalPassword">Onay şifresi</label><input id="approvalPassword" type="password" inputmode="numeric" autocomplete="current-password" required><p id="approvalPasswordError" class="form-error"></p><div class="dialog-actions"><button id="approvalPasswordCancel" type="button">Vazgeç</button><button type="submit">Onayla ve Excel’e yaz</button></div></form></dialog>
   <script src="/app.js" defer></script>
+  <script src="/i18n.js" defer></script>
+  <script src="/cfo.js" defer></script>
 </body>
 </html>

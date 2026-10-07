@@ -11,7 +11,9 @@ from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock
 from openpyxl import load_workbook
 
-sys.path.insert(0, r'C:\ai-excel\scripts')
+_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+if _SCRIPTS.exists():
+    sys.path.insert(0, str(_SCRIPTS))
 import faaliyet_yonetimi as yonetim
 import telegram_bot as bot
 import guvenlik

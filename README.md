@@ -84,3 +84,130 @@ Dashboard içindeki **Konsolidasyon ve denetim merkezi** üzerinden grup içi tr
 kur değerleme, dönem kapanış kontrolü, cari yaşlandırma, banka mutabakatı,
 hesap eşlemeleri ve onay kuralları yönetilir. Grup içi transferler kaynak ve hedef
 faaliyete birlikte kaydedilir; holding raporunda 131/331 grup içi bakiyeleri elimine edilir.
+
+---
+
+# CFO Operating System katmanı (yeni)
+
+Bu katman mevcut mimariyi bozmadan eklenmiştir: aynı Python + SQLite + Vanilla JS
+stack'i, aynı merkezi defter (`finans_cekirdegi`), aynı Excel master. Yeni modüller
+`scripts/` altındadır ve yalnızca **ek tablo/sütun** (additive migration) ekler;
+var olan sütunlar yeniden adlandırılmaz veya silinmez.
+
+## Domain hiyerarşisi
+
+```
+Holding → Faaliyet Alanı → Şirket → Proje → Sözleşme → Hakediş → İş Kalemi → Finansal İşlem → Belge
+```
+
+`veri_katmani.py` şu tabloları ve `fisler` tablosuna şu dimension sütunlarını (nullable)
+ekler: `aktivite_id, sozlesme_id, hakedis_id, is_kalemi_id, masraf_merkezi_id, kategori_id, karsi_taraf_id`.
+
+## Finansal çekirdek (tek hesap merkezi)
+
+- `money.py` — Money değer nesnesi; **tamsayı kuruş** ve `Decimal`. `0.1 + 0.2` gibi
+  kayan nokta hataları finans hesaplarından kaldırılmıştır. TR biçimleme: `₺1.250.000`, `%24,5`.
+- `finans_motoru.py` — Merkezi finans motoru. Nakit, alacak, borç, ciro, maliyet,
+  brüt kâr/marj, net işletme sermayesi, yatırım kapasitesi, 13 haftalık minimum nakit
+  ve şirket/faaliyet alanı/proje/iş kalemi kırılımları **yalnız buradan** gelir.
+  UI/AI hiçbir finansal değeri elle hesaplamaz.
+
+## Holding CFO
+
+- `ticari.py` — AR/AP yaşlandırma (0-30 / 31-60 / 61-90 / 90+), gecikmiş işaretleme, yaklaşan ödemeler.
+- `butce_forecast.py` — Bütçe / Taahhüt / Gerçekleşen / Tahmin (EAC) / Sapma.
+- `nakit_13hafta.py` — 13 haftalık nakit akışı (Opening, Collections, Supplier, Payroll,
+  Tax, Opex, Investments, Financing, Closing) + minimum rezerv eşiği ve risk bayrağı.
+- Intercompany: mevcut `sirketler_arasi_transfer` çift taraflı kayıt + eliminasyon.
+
+## Senaryo motoru
+
+- `senaryo_motoru.py` — 11 değişkenli senaryo: ek tahsilat, tahsilat/ödeme gecikmesi,
+  ek ödeme, yeni yatırım/kredi, faiz maliyeti, kur/gelir değişimi, maliyet artışı, proje gecikmesi.
+- Sonuç **4 seviyelidir**: Güvenli / Sınırda / Riskli / Uygulanamaz ve adım adım gerekçe (formül) içerir.
+- Senaryo sürümleme: Base / Best / Worst / Management Plan varsayımlarıyla saklanır.
+
+## Doküman otomasyonu
+
+- `belge_pipeline.py` — UPLOAD → PARSE → OCR → FIELD EXTRACTION → CLASSIFICATION →
+  DUPLICATE CHECK → MATCHING → USER REVIEW → APPROVAL → POSTING.
+- Deterministik sınıflandırma + güven yüzdesi + alan çıkarımı + SHA-256 mükerrer tespiti.
+- AI yalnızca **öneri** üretir (ör. "%92 confidence: Göktürk Okulu olabilir"); otomatik kayıt oluşturmaz.
+  Belge metni **güvenilmeyen veri** olarak ele alınır (prompt injection'a karşı).
+
+## AI CFO
+
+```
+DATABASE → FINANCIAL ENGINE → STRUCTURED CFO CONTEXT → AI → EXPLANATION / RECOMMENDATION
+```
+- `ai_cfo.py` sayıları **hesaplamaz**; yalnız `finans_motoru` çıktısını yorumlar.
+- Cevap her zaman `Data through` tarihini ve kanıtları gösterir; veri yoksa "Bu veri sistemde mevcut değil." der.
+- Otomatik içgörüler: type / severity (INFO/WARNING/CRITICAL) / title / description / entity / metric / detectedAt / status.
+- Kritik işlemleri otomatik yapmaz; onay zorunludur.
+
+## Roller / yetki
+
+- `yetki.py` — OWNER, CFO, FINANCE_MANAGER, ACCOUNTANT, PROJECT_MANAGER, VIEWER.
+- Eski roller (ADMIN/FINANS/ONAYCI/IZLEYICI) uyumluluk için eşlenir.
+- **UI gizleme yetkilendirme değildir**; izinler sunucu/API katmanında zorunlu kılınır.
+
+## Audit / onay
+
+- `audit_db.py` — actor / action / entityType / entityId / before / after / timestamp.
+  Hassas alanlar (parola, secret, token) **maskelenir**; ayrıca mevcut hash-zincirli JSONL'e yazılır.
+- Mevcut onay matrisi (tutar bazlı, DRAFT/PENDING/APPROVED/REJECTED) korunur.
+
+## FX
+
+- `fx_provider.py` — `FxRateProvider` soyutlaması; `ManuelFxRateProvider` (veritabanı) varsayılan,
+  `TcmbFxRateProvider` iskelet (ağ/credential gerekir). Geliştirme fallback'i manuel kurdur.
+
+## İleri FP&A
+
+- `fpa_ileri.py` — duyarlılık analizi (maliyet/gelir ±%), başabaş, tahmin doğruluğu (hata % / MAPE),
+  Monte Carlo (isteğe bağlı modül; production motorunun bağımlılığı değildir; simülasyon backend'de).
+
+## API (yeni uçlar)
+
+`GET  /api/kpi, /api/kirilim, /api/proje-karlilik, /api/is-kalemleri-karlilik, /api/nakit/13hafta,
+/api/ticari/alacak, /api/ticari/borc, /api/ticari/yaklasan, /api/butce/gerceklesen, /api/taahhut,
+/api/senaryolar, /api/senaryo/karsilastir, /api/ai-cfo/insights, /api/ai-cfo/baglam, /api/raporlar,
+/api/rapor?ad=, /api/audit, /api/yetki/roller, /api/fpa/duyarlilik, /api/fpa/basabas,
+/api/fpa/monte-carlo, /api/fpa/dogruluk, /api/fx/cevir, /api/belge/kuyruk`
+
+`POST /api/senaryo/motor, /api/senaryo/kaydet, /api/ai-cfo/sor, /api/belge/pipeline,
+/api/fpa/dogruluk-kaydet, /api/demo/hierarchy`
+
+## Arayüz
+
+- `ui/cfo.js`, `ui/cfo.css`, `ui/i18n.js` — mevcut panel korunur; üstte CFO navigasyonu eklenir:
+  Holding · Faaliyetler · Projeler · Nakit & Hazine · Alacaklar · Borçlar · Bütçe & Forecast ·
+  Senaryolar · Belgeler · AI CFO · Raporlar · Yönetim.
+- KPI kartları trend + drill-down; veri tablolarında sorting/filter/search/column-visibility/pagination/export;
+  risk badge'leri (renk + metin); loading skeleton, empty/error state; responsive.
+- Metinler `ui/i18n.js` içinde merkezileştirilmiştir (Türkçe öncelikli).
+
+## Veritabanı migration
+
+Şema **additive**tir; `veri_katmani.veritabani_hazirla()` çağrısı yeni tabloları (`CREATE TABLE IF NOT EXISTS`)
+ve yeni sütunları (`ALTER TABLE ... ADD COLUMN`) idempotent biçimde ekler. Veri kaybına yol açan
+drop/rename **yapılmaz**. Demo hiyerarşi yalnızca açık çağrıyla (`POST /api/demo/hierarchy`) yüklenir.
+
+## Testler
+
+```powershell
+py -3.12 -m pytest -q
+```
+Testler yerel `scripts/` klasörünü içeri alır (taşınabilir). Yeni CFO katmanı için
+`tests/test_holding_cfo.py` finansal invariantları doğrular (brüt kâr/marj, denge, 13 hafta
+kapanış, senaryo seviyeleri, duplicate, yetki, FX, MAPE).
+
+> Not: `test_phase1.py::test_pdf_gorsele_cevrilir` ortamda `pdftoppm` (poppler) yoksa
+> hata verir; bu koddan bağımsız bir ortam gereksinimidir.
+
+## Ortam değişkenleri
+
+`.env.example`'a bakın (`.env` olarak kopyalayın). Gerçek secret **commit edilmez**;
+`.gitignore` `.env`, `*.xlsx`, `*.db`, `loglar/`, `veri/` gibi tüm gizli/finansal veriyi dışlar.
+
+

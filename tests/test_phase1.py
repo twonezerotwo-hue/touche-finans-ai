@@ -12,7 +12,9 @@ from unittest.mock import patch
 from openpyxl import Workbook, load_workbook
 from PIL import Image
 
-sys.path.insert(0, r"C:\ai-excel\scripts")
+_SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+if _SCRIPTS.exists():
+    sys.path.insert(0, str(_SCRIPTS))
 
 import excel_yazici
 import guvenlik

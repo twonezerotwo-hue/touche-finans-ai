@@ -39,6 +39,25 @@ from ui_belge_servisi import (  # noqa: E402
 from sohbet_kaydi import _norm as sohbet_norm, faaliyet_key_bul, kayit_niyeti_mi  # noqa: E402
 from ui_yetki import eslestir, kod_uret, oturum, yetkililer, yetki_kaldir  # noqa: E402
 
+# === CFO Operating System katmanlari (additive) ===
+import audit_db  # noqa: E402
+import fpa_ileri  # noqa: E402
+import yetki as rol_yetki  # noqa: E402
+import veri_katmani  # noqa: E402
+import ai_cfo  # noqa: E402
+import raporlar  # noqa: E402
+from ai_cfo import insights_uret  # noqa: E402
+from belge_pipeline import kuyruk_durumu, kuyruga_ekle, pipeline_calistir  # noqa: E402
+from butce_forecast import butce_gerceklesen, taahhut_ozeti  # noqa: E402
+from finans_motoru import boyut_kirilimi, holding_kpi, is_kalemi_grid, proje_karlilik  # noqa: E402
+from fx_provider import kur_cevir  # noqa: E402
+from nakit_13hafta import nakit_13_hafta  # noqa: E402
+from senaryo_motoru import (  # noqa: E402
+    senaryo_hesapla as senaryo_motoru_hesapla, senaryo_karsilastir,
+    senaryo_kaydet, senaryolari_listele,
+)
+from ticari import alacaklar, borclar, yaklasan_odemeler  # noqa: E402
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("finans_asistani")
 
@@ -159,6 +178,16 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return urlparse(origin).netloc.casefold() == self.headers.get("Host", "").casefold()
 
+    def _rol(self, session) -> str:
+        """Oturumdan rol turetir (yerel yonetici = OWNER)."""
+        if session.get("rol"):
+            return rol_yetki.rol_normalize(session["rol"])
+        return "OWNER" if session.get("yerel") else "FINANCE_MANAGER"
+
+    def _faaliyet_param(self, q) -> str | None:
+        deger = (q.get("faaliyet") or [None])[0]
+        return None if deger in {None, "", "tum", "touche_holding"} else deger
+
     def _multipart(self):
         uzunluk = int(self.headers.get("Content-Length", "0") or 0)
         if uzunluk < 1 or uzunluk > MAX_BYTES + 1024 * 1024:
@@ -185,7 +214,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
-        dosya = {"/": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/favicon.svg": "favicon.svg"}.get(parsed.path)
+        dosya = {
+            "/": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/favicon.svg": "favicon.svg",
+            "/cfo.js": "cfo.js", "/cfo.css": "cfo.css", "/i18n.js": "i18n.js",
+        }.get(parsed.path)
         if dosya:
             yol = UI_DIR / dosya
             if not yol.exists():
@@ -289,7 +321,105 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 log.exception("Dashboard hatasi")
                 return self._json({"hata": str(exc)}, 400)
+        if parsed.path == "/api/kpi":
+            q = parse_qs(parsed.query)
+            return self._json(holding_kpi(self._faaliyet_param(q), self._body_profil(q)))
+        if parsed.path == "/api/kirilim":
+            q = parse_qs(parsed.query)
+            try:
+                return self._json({"kalemler": boyut_kirilimi((q.get("boyut") or ["sirket"])[0],
+                                                              self._faaliyet_param(q))})
+            except Exception as exc:
+                return self._json({"hata": str(exc)}, 400)
+        if parsed.path == "/api/proje-karlilik":
+            q = parse_qs(parsed.query)
+            return self._json({"kalemler": proje_karlilik(self._faaliyet_param(q))})
+        if parsed.path == "/api/is-kalemleri-karlilik":
+            q = parse_qs(parsed.query)
+            return self._json({"kalemler": is_kalemi_grid(self._faaliyet_param(q),
+                                                          (q.get("proje") or [None])[0])})
+        if parsed.path == "/api/ticari/alacak":
+            q = parse_qs(parsed.query)
+            return self._json(alacaklar(self._faaliyet_param(q), (q.get("tarih") or [None])[0]))
+        if parsed.path == "/api/ticari/borc":
+            q = parse_qs(parsed.query)
+            return self._json(borclar(self._faaliyet_param(q), (q.get("tarih") or [None])[0]))
+        if parsed.path == "/api/ticari/yaklasan":
+            q = parse_qs(parsed.query)
+            return self._json({"odemeler": yaklasan_odemeler(
+                self._faaliyet_param(q), gun=int((q.get("gun") or [30])[0]))})
+        if parsed.path == "/api/nakit/13hafta":
+            q = parse_qs(parsed.query)
+            return self._json(nakit_13_hafta(self._faaliyet_param(q)))
+        if parsed.path == "/api/butce/gerceklesen":
+            q = parse_qs(parsed.query)
+            return self._json(butce_gerceklesen(
+                (q.get("faaliyet") or ["tum"])[0], (q.get("baslangic") or [None])[0],
+                (q.get("bitis") or [None])[0], (q.get("proje") or [None])[0]))
+        if parsed.path == "/api/taahhut":
+            q = parse_qs(parsed.query)
+            return self._json(taahhut_ozeti(self._faaliyet_param(q)))
+        if parsed.path == "/api/senaryolar":
+            return self._json({"senaryolar": senaryolari_listele()})
+        if parsed.path == "/api/senaryo/karsilastir":
+            return self._json(senaryo_karsilastir())
+        if parsed.path == "/api/ai-cfo/insights":
+            q = parse_qs(parsed.query)
+            return self._json({"insights": insights_uret(self._faaliyet_param(q))})
+        if parsed.path == "/api/ai-cfo/baglam":
+            q = parse_qs(parsed.query)
+            return self._json(ai_cfo.cfo_baglam(self._faaliyet_param(q)))
+        if parsed.path == "/api/raporlar":
+            return self._json({"raporlar": raporlar.rapor_listesi()})
+        if parsed.path == "/api/rapor":
+            q = parse_qs(parsed.query)
+            ad = (q.get("ad") or [""])[0]
+            kwargs = {"faaliyet": self._faaliyet_param(q)}
+            if ad in {"budget-vs-actual"}:
+                kwargs.update({"baslangic": (q.get("baslangic") or [None])[0],
+                               "bitis": (q.get("bitis") or [None])[0],
+                               "proje": (q.get("proje") or [None])[0]})
+            try:
+                return self._json(raporlar.rapor_getir(ad, **kwargs))
+            except Exception as exc:
+                return self._json({"hata": str(exc)}, 400)
+        if parsed.path == "/api/audit":
+            if not rol_yetki.izin_var(self._rol(session), "audit.goruntule"):
+                return self._json({"hata": "Yetkisiz."}, 403)
+            q = parse_qs(parsed.query)
+            return self._json({"kayitlar": audit_db.kayitlar(limit=int((q.get("limit") or [100])[0]))})
+        if parsed.path == "/api/yetki/roller":
+            return self._json({"roller": rol_yetki.rol_listesi(), "aktif_rol": self._rol(session)})
+        if parsed.path == "/api/fpa/duyarlilik":
+            q = parse_qs(parsed.query)
+            return self._json(fpa_ileri.duyarlilik_analizi(self._faaliyet_param(q)))
+        if parsed.path == "/api/fpa/basabas":
+            q = parse_qs(parsed.query)
+            return self._json(fpa_ileri.basabas(self._faaliyet_param(q)))
+        if parsed.path == "/api/fpa/monte-carlo":
+            q = parse_qs(parsed.query)
+            try:
+                return self._json(fpa_ileri.monte_carlo(
+                    self._faaliyet_param(q), iterasyon=int((q.get("iterasyon") or [1000])[0])))
+            except Exception as exc:
+                return self._json({"hata": str(exc)}, 400)
+        if parsed.path == "/api/fpa/dogruluk":
+            return self._json(fpa_ileri.dogruluk_ozeti())
+        if parsed.path == "/api/belge/kuyruk":
+            q = parse_qs(parsed.query)
+            return self._json(kuyruk_durumu((q.get("belge_id") or [""])[0]))
+        if parsed.path == "/api/fx/cevir":
+            q = parse_qs(parsed.query)
+            try:
+                return self._json(kur_cevir((q.get("tutar") or ["0"])[0], (q.get("kaynak") or ["USD"])[0],
+                                            (q.get("hedef") or ["TL"])[0], (q.get("tarih") or [None])[0]))
+            except Exception as exc:
+                return self._json({"hata": str(exc)}, 400)
         return self._json({"hata": "Bulunamadi"}, 404)
+
+    def _body_profil(self, q):
+        return {"rezerv_gun": int((q.get("rezerv_gun") or [30])[0]),
+                "hedef_marj": float((q.get("hedef_marj") or [15])[0])}
 
     def do_POST(self):
         yol = urlparse(self.path).path
@@ -476,6 +606,45 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(proje_kalemini_guncelle(
                     eslesme.group(1), body.get("degisiklikler"), session["kimlik"]
                 ))
+            if yol == "/api/senaryo/motor":
+                body = self._body()
+                return self._json(senaryo_motoru_hesapla(
+                    body.get("faaliyet", "tum"), body.get("profil"), body.get("degisiklikler")))
+            if yol == "/api/senaryo/kaydet":
+                rol_yetki.kontrol(self._rol(session), "senaryo.olustur")
+                body = self._body()
+                sonuc = senaryo_kaydet(body.get("ad"), body.get("tip", "BASE"),
+                                       body.get("faaliyet", "tum"), body.get("profil"),
+                                       body.get("degisiklikler"), session.get("kimlik") or "yerel")
+                audit_db.kaydet("SCENARIO_CREATED", actor=session.get("kimlik"),
+                                entity_type="senaryo", entity_id=sonuc["senaryo_id"],
+                                after={"ad": sonuc["ad"], "tip": sonuc["tip"]})
+                return self._json(sonuc, 201)
+            if yol == "/api/ai-cfo/sor":
+                rol_yetki.kontrol(self._rol(session), "ai.sor")
+                body = self._body()
+                return self._json(ai_cfo.soru_cevapla(body.get("soru", ""), body.get("faaliyet")))
+            if yol == "/api/belge/pipeline":
+                rol_yetki.kontrol(self._rol(session), "belge.yukle")
+                body = self._body()
+                sonuc = pipeline_calistir(body.get("metin", ""), body.get("dosya_adi", ""),
+                                          body.get("firma"), body.get("proje"))
+                if body.get("belge_id"):
+                    kuyruga_ekle(body.get("belge_id"), sonuc, session.get("kimlik") or "yerel")
+                    sonuc["kuyruk"] = {"belge_id": body.get("belge_id"), "durum": "USER_REVIEW"}
+                audit_db.kaydet("DOCUMENT_CLASSIFIED", actor=session.get("kimlik"),
+                                entity_type="belge", entity_id=body.get("belge_id"),
+                                after={"tur": sonuc["tur"], "guven": sonuc["guven"]})
+                return self._json(sonuc, 201)
+            if yol == "/api/fpa/dogruluk-kaydet":
+                rol_yetki.kontrol(self._rol(session), "finans.duzenle")
+                body = self._body()
+                return self._json(fpa_ileri.dogruluk_kaydet(
+                    body.get("donem"), body.get("onceki_tahmin"), body.get("gerceklesen"),
+                    body.get("olcu", "NAKIT")), 201)
+            if yol == "/api/demo/hierarchy":
+                rol_yetki.kontrol(self._rol(session), "ayar.duzenle")
+                return self._json(veri_katmani.demo_holding_hierarchy_yukle(), 201)
             return self._json({"hata": "Bulunamadi"}, 404)
         except Exception as exc:
             log.exception("Asistan hatasi")
