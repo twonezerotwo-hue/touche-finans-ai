@@ -45,10 +45,18 @@
       <section class="assistant-panel assistant-primary">
         <div class="assistant-head"><div class="ai-mark"><span>AI</span></div><div><h2>CFO Asistanı</h2><p id="aiStatus"><i></i> Defter kanıtlarıyla hazır</p></div><span id="aiConfidence" class="ai-confidence" hidden>—</span></div>
         <strong id="assistantContext" hidden>Tüm holding</strong>
-        <div id="chat" class="chat" aria-live="polite"><div class="message assistant">Bana doğal şekilde sorun. Örneğin “Gürsar'ın eylül ayında yaptığı ödemeleri kalem kalem göster” veya “Bu ay ilk ne ödenmeli?” diyebilirsiniz.</div></div>
+        <form id="uploadForm" class="assistant-upload-form">
+          <label id="dropZone" class="assistant-attach" for="dosya" title="Belge ekle"><span aria-hidden="true">＋</span><strong>Belge ekle</strong><input id="dosya" name="dosya" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp" required></label>
+          <div id="uploadFile" class="assistant-upload-file"><strong>Fatura, dekont veya görsel</strong><span>PDF, JPG, PNG, WEBP veya BMP · en fazla 20 MB</span></div>
+          <label class="assistant-upload-company"><span class="sr-only">Belgenin faaliyeti</span><select id="uploadFirma" name="firma"><option value="">Faaliyeti AI bulsun</option></select></label>
+          <button id="uploadButton" type="submit">İncele</button>
+        </form>
+        <p id="uploadStatus" class="assistant-upload-status" aria-live="polite"></p>
+        <div id="chat" class="chat" aria-live="polite"><div class="message assistant">Bana doğal şekilde sorun veya bir belge ekleyin. Fatura, dekont ve diğer finans belgelerini inceleyip aynı konuşmada güvenli kayıt taslağı hazırlayabilirim.</div></div>
         <div id="aiEvidence" class="ai-evidence" hidden></div>
         <div class="quick-questions"><button type="button" data-question="Bugün ilk hangi ödemeleri yapmalıyım?">Ödeme önceliği</button><button type="button" data-question="Gürsar Mimarlık için bu ay yapılan ödemeleri kalem kalem göster">Gürsar ödemeleri</button><button type="button" data-question="Önümüzdeki 30 günlük nakit riskini açıkla">Nakit riski</button><button type="button" data-question="Faaliyetlerin kârlılığını karşılaştır">Kârlılık</button></div>
         <form id="chatForm"><label class="sr-only" for="soru">Finans sorunuzu yazın</label><textarea id="soru" rows="3" maxlength="1500" placeholder="Finans sorunuzu doğal şekilde yazın…"></textarea><button id="gonder" type="submit">Gönder</button></form>
+        <details id="documentHistory" class="assistant-document-history"><summary>Son belgeler <span id="documentCount">0</span></summary><div id="belgeler" class="document-list"></div></details>
         <p class="disclaimer">Karar destek sistemidir; ödeme yapmaz ve kesin yatırım getirisi vaat etmez.</p>
       </section>
 
@@ -57,12 +65,6 @@
         <article class="panel compact-panel"><div class="panel-title"><div><p class="eyebrow">Son kayıtlar</p><h2>Nakit hareketleri</h2></div><span id="hareketSayisi" class="count">0 kayıt</span></div><div id="sonHareketler" class="payment-list"><p class="empty">Kayıtlar yükleniyor.</p></div></article>
       </div>
     </section>
-
-    <article class="panel upload-panel clean-upload">
-      <div class="panel-title"><div><p class="eyebrow">Belge merkezi</p><h2>Belgeyi yükle, yapay zekâ incelesin</h2></div><span class="count">Onaydan önce yazılmaz</span></div>
-      <form id="uploadForm" class="upload-form"><label id="dropZone" class="drop-zone" for="dosya"><strong>Fatura, dekont veya belge seçin</strong><span>PDF, JPG, PNG, WEBP veya BMP · en fazla 20 MB</span><input id="dosya" name="dosya" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp" required></label><label class="upload-company">Faaliyet<select id="uploadFirma" name="firma"><option value="">Yapay zekâ otomatik bulsun</option></select></label><button id="uploadButton" type="submit">İncele</button></form>
-      <p id="uploadStatus" class="upload-status" aria-live="polite"></p><div id="belgeler" class="document-list"></div>
-    </article>
 
     <details class="management-tools">
       <summary>İleri yönetim araçları</summary>

@@ -53,6 +53,7 @@ from belge_pipeline import mukerrer_kontrol as belge_mukerrer_kontrol  # noqa: E
 from butce_forecast import butce_gerceklesen, taahhut_ozeti  # noqa: E402
 from finans_motoru import boyut_kirilimi, holding_kpi, is_kalemi_grid, proje_karlilik  # noqa: E402
 from fx_provider import kur_cevir  # noqa: E402
+from money import tl_metin  # noqa: E402
 from nakit_13hafta import nakit_13_hafta  # noqa: E402
 from senaryo_motoru import (  # noqa: E402
     senaryo_hesapla as senaryo_motoru_hesapla, senaryo_karsilastir,
@@ -62,6 +63,43 @@ from ticari import alacaklar, borclar, yaklasan_odemeler  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("finans_asistani")
+
+
+def _ekran_kpi(faaliyet, profil):
+    """Tüm ekranlarda karar panosunun tek likidite/ödeme hesabını kullanır."""
+    kpi = holding_kpi(faaliyet, profil)
+    pano = karar_panosu(faaliyet or "tum", {
+        "rezerv_gun": int((profil or {}).get("rezerv_gun", 30) or 30),
+        "risk": "orta", "yatirim_vadesi_ay": 12,
+    })
+    ozet, plan = pano["ozet"], pano["nakit_plani"]
+    nakit = round(float(ozet["nakit"]) * 100)
+    korunacak = round(float(plan["rezerv"]) * 100)
+    beklenen = round(float(plan["30_gun_beklenen_tahsilat"]) * 100)
+    odeme = round(float(plan["30_gun_vadeli_odeme"]) * 100)
+    kapasite = round(float(plan["yatirim_kapasitesi"]) * 100)
+    kapanislar = [round(float(x["kapanis"]) * 100) for x in pano.get("nakit_projeksiyonu", [])]
+    kpi.update({
+        "toplam_nakit_kurus": nakit,
+        "korunacak_nakit_kurus": korunacak,
+        "kullanilabilir_nakit_kurus": nakit - korunacak,
+        "toplam_alacak_kurus": round(float(ozet["alacak"]) * 100),
+        "toplam_borc_kurus": round(float(ozet["borc"]) * 100),
+        "yatirim_kapasitesi_kurus": kapasite,
+        "beklenen_tahsilat_30_kurus": beklenen,
+        "vadesi_gelen_odeme_30_kurus": odeme,
+        "min_13_hafta_nakit_kurus": min(kapanislar) if kapanislar else nakit,
+    })
+    kpi["metin"].update({
+        "toplam_nakit": tl_metin(nakit / 100),
+        "kullanilabilir_nakit": tl_metin((nakit - korunacak) / 100),
+        "korunacak_nakit": tl_metin(korunacak / 100),
+        "toplam_alacak": tl_metin(ozet["alacak"]),
+        "toplam_borc": tl_metin(ozet["borc"]),
+        "yatirim_kapasitesi": tl_metin(kapasite / 100),
+        "min_13_hafta": tl_metin((min(kapanislar) if kapanislar else nakit) / 100),
+    })
+    return kpi
 
 
 def _sohbet_taslak_cevabi(taslak, duzeltildi=False):
@@ -376,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cfo_get(self, path, q, session):
         """CFO Operating System GET uclari; eslesme yoksa None doner."""
         if path == "/api/kpi":
-            return holding_kpi(self._faaliyet_q(q, session), self._body_profil(q))
+            return _ekran_kpi(self._faaliyet_q(q, session), self._body_profil(q))
         if path == "/api/kirilim":
             return {"kalemler": boyut_kirilimi((q.get("boyut") or ["sirket"])[0], self._faaliyet_q(q, session))}
         if path == "/api/proje-karlilik":

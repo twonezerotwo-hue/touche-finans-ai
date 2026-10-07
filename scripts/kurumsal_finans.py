@@ -14,8 +14,9 @@ from datetime import date, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from config import FIRMALAR
 from finans_cekirdegi import (
-    _baglanti, _donem_acik_mi, _kurus, _simdi, _tarih,
+    _baglanti, _donem_acik_mi, _kurus, _norm, _simdi, _tarih,
     veritabanini_hazirla,
 )
 from guvenlik import audit_yaz, belge_sha256
@@ -23,6 +24,18 @@ from guvenlik import audit_yaz, belge_sha256
 
 ROLLER = {"ADMIN", "FINANS", "ONAYCI", "IZLEYICI"}
 PARASAL_HESAPLAR = {"100", "101", "102", "120", "131", "159", "300", "320", "331", "335", "336"}
+
+
+def _ticari_borc_grubu(cari, aciklama):
+    """Ödemeyi tahakkuk ettiği iş/maliyet grubuyla aynı açık kalemde netleştirir."""
+    metin = _norm(f"{cari or ''} {aciklama or ''}")
+    gruplar = []
+    for firma in FIRMALAR.values():
+        gruplar.extend((firma.get("master_data") or {}).get("maliyet_gruplari") or [])
+    for grup in dict.fromkeys(gruplar):
+        if _norm(grup) in metin:
+            return str(grup)
+    return str(cari or "Cari belirtilmemiş").strip() or "Cari belirtilmemiş"
 
 
 def _kimlik(prefix):
@@ -309,14 +322,15 @@ def cari_yaslandirma(hesap_kodu="120", faaliyet=None, rapor_tarihi=None):
         where.append("f.faaliyet_key=?"); args.append(faaliyet)
     with _baglanti() as con:
         rows = con.execute(
-            "SELECT f.faaliyet_key,f.cari,f.tarih,f.vade,f.fis_id,s.borc_kurus,s.alacak_kurus "
+            "SELECT f.faaliyet_key,f.cari,f.aciklama,f.tarih,f.vade,f.fis_id,s.borc_kurus,s.alacak_kurus "
             "FROM fisler f JOIN fis_satirlari s ON s.fis_id=f.fis_id WHERE " + " AND ".join(where) +
             " ORDER BY f.faaliyet_key,f.cari,f.tarih,f.fis_id",
             args,
         ).fetchall()
     gruplar = {}
     for r in rows:
-        key = (r["faaliyet_key"], r["cari"])
+        cari = _ticari_borc_grubu(r["cari"], r["aciklama"]) if hesap_kodu == "320" else r["cari"]
+        key = (r["faaliyet_key"], cari)
         g = gruplar.setdefault(key, {"aciklar": [], "avans": 0})
         delta = (r["borc_kurus"] - r["alacak_kurus"]) if hesap_kodu == "120" else (r["alacak_kurus"] - r["borc_kurus"])
         if delta > 0:

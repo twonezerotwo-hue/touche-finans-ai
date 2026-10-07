@@ -402,14 +402,19 @@
   });
 
   kayit("borc", async (root) => {
-    const b = await api("/api/ticari/borc?" + qs());
-    const yak = await api("/api/ticari/yaklasan?" + qs({ gun: 30 }));
+    const [b, yak, kpi] = await Promise.all([
+      api("/api/ticari/borc?" + qs()),
+      api("/api/ticari/yaklasan?" + qs({ gun: 30 })),
+      api("/api/kpi?" + qs()),
+    ]);
+    const yakToplamKurus = yak.odemeler.reduce((toplam, x) => toplam + Math.round(Number(x.tutar || 0) * 100), 0);
     root.appendChild(el("h2", { text: "Borçlar (AP) ve Yaklaşan Ödemeler" }));
     const k = el("div", { class: "cfo-kpis" });
     k.append(
-      kpiCard("Toplam Borç", "\u20ba" + b.toplam.toLocaleString("tr-TR", { maximumFractionDigits: 0 }), "Açık kalem"),
+      kpiCard("Toplam Borç", fmtKurus(kpi.toplam_borc_kurus), "Finansal + ticari"),
+      kpiCard("Açık Ticari Borç", "\u20ba" + b.toplam.toLocaleString("tr-TR", { maximumFractionDigits: 0 }), "Ödemeler düşülmüş bakiye"),
       kpiCard("Gecikmiş", "\u20ba" + b.gecikmis.toLocaleString("tr-TR", { maximumFractionDigits: 0 }), fmtPct(b.gecikmis_oran) + " gecikme"),
-      kpiCard("30 Gün İçinde", String(yak.odemeler.length) + " ödeme", "Yaklaşan"),
+      kpiCard("30 Gün İçinde", fmtKurus(yakToplamKurus), String(yak.odemeler.length) + " ödeme"),
     );
     root.appendChild(k);
     root.appendChild(el("h3", { text: "Yaklaşan ödemeler" }));
@@ -419,7 +424,7 @@
       { key: "tutar", label: t("th_tutar"), num: true, format: (r) => r.tutar_metin },
       { key: "gecikmis", label: t("th_durum"), badge: (r) => (r.gecikmis ? "danger" : "warning"), badgeText: (r) => (r.gecikmis ? "Gecikmiş" : "Planlı") },
     ], yak.odemeler));
-    root.appendChild(el("h3", { text: "Cari yaşlandırma" }));
+    root.appendChild(el("h3", { text: "Ticari borç yaşlandırması · gerçekleşen ödemeler düşülmüştür" }));
     root.appendChild(dataTable(agingCols, b.kalemler, { sortKey: "toplam" }));
   });
 

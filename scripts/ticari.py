@@ -50,39 +50,22 @@ def borclar(faaliyet=None, rapor_tarihi=None) -> dict:
 
 
 def yaklasan_odemeler(faaliyet=None, bugun=None, gun: int = 30, limit: int = 50) -> list[dict]:
-    """Vadesi yaklasan borc kalemlerini (320) listeler."""
-    from finans_cekirdegi import _tarih
-    from veri_katmani import baglanti, veritabani_hazirla
+    """Netlenmiş ticari borçları ve sıradaki kredi taksidini tek ödeme planında listeler."""
+    from finans_danismani import odeme_oncelikleri
 
-    veritabani_hazirla()
     bugun = bugun or date.today()
-    where, args = ["s.hesap_kodu='320'", "TRIM(COALESCE(f.cari,''))<>''"], []
-    if faaliyet and faaliyet not in {"tum", "touche_holding"}:
-        where.append("f.faaliyet_key=?")
-        args.append(faaliyet)
-    with baglanti() as con:
-        rows = con.execute(
-            "SELECT f.faaliyet_key,f.proje,f.cari,f.vade,SUM(s.alacak_kurus-s.borc_kurus) bakiye "
-            "FROM fisler f JOIN fis_satirlari s ON s.fis_id=f.fis_id WHERE " + " AND ".join(where) +
-            " GROUP BY f.faaliyet_key,f.proje,f.cari,f.vade HAVING bakiye>0",
-            args,
-        ).fetchall()
     sonuc = []
-    for r in rows:
-        vade = str(r["vade"] or "").strip()
-        vade_gun = None
-        if vade:
-            try:
-                vade_gun = (_tarih(vade) - bugun).days
-            except ValueError:
-                vade_gun = None
-        if vade_gun is not None and vade_gun > int(gun):
+    faaliyet_key = faaliyet or "tum"
+    for odeme in odeme_oncelikleri(faaliyet_key, bugun=bugun, limit=50):
+        kalan = odeme.get("kalan_gun")
+        if kalan is None or kalan > int(gun):
             continue
         sonuc.append({
-            "faaliyet": r["faaliyet_key"], "proje": r["proje"], "cari": r["cari"],
-            "vade": vade or None, "kalan_gun": vade_gun, "tutar": round(r["bakiye"] / 100, 2),
-            "tutar_metin": tl_metin(r["bakiye"] / 100),
-            "gecikmis": vade_gun is not None and vade_gun < 0,
+            "faaliyet": odeme["faaliyet"], "proje": odeme.get("proje") or "",
+            "cari": odeme["cari"], "vade": odeme.get("vade"), "kalan_gun": kalan,
+            "tutar": round(float(odeme["tutar"]), 2), "tutar_metin": tl_metin(odeme["tutar"]),
+            "gecikmis": kalan < 0, "durum": odeme.get("durum"),
+            "kaynak": odeme.get("kaynak", "Merkez finans defteri"),
         })
-    sonuc.sort(key=lambda x: (x["kalan_gun"] if x["kalan_gun"] is not None else 10**9))
+    sonuc.sort(key=lambda x: x["kalan_gun"])
     return sonuc[: max(1, int(limit))]

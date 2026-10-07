@@ -71,6 +71,23 @@ dialog{border:0;border-radius:17px;padding:25px;width:min(540px,calc(100% - 30px
 @media(max-width:760px){.summary-rail{grid-template-columns:1fr}.assistant-primary .chat{height:330px}.clean-upload{margin-top:10px}}
 @media(max-width:580px){.assistant-primary .message{max-width:94%;font-size:.8rem}.assistant-primary .chat{padding:14px}.management-actions{display:grid;grid-template-columns:1fr 1fr}.decision-card h1{font-size:1.2rem}.metrics small{line-height:1.35}}
 
+/* CFO sohbeti ve belge merkezi tek çalışma alanı */
+.assistant-upload-form{display:grid!important;grid-template-columns:auto minmax(150px,1fr) 180px auto!important;gap:8px!important;align-items:center;padding:10px 16px 5px!important;border-top:1px solid var(--line);background:#f8fbf9}
+.assistant-attach{height:42px;display:flex;align-items:center;gap:7px;border:1px solid #bad4c7;border-radius:10px;background:#edf6f1;color:var(--green);padding:0 12px;cursor:pointer;font-size:.72rem;font-weight:800;white-space:nowrap;transition:.16s ease}
+.assistant-attach:hover,.assistant-attach.drag{border-color:var(--green);background:#e2f2ea;transform:translateY(-1px)}
+.assistant-attach span{font-size:1.05rem;line-height:1}.assistant-attach input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.assistant-upload-file{min-width:0}.assistant-upload-file strong,.assistant-upload-file span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.assistant-upload-file strong{font-size:.72rem;color:var(--navy)}.assistant-upload-file span{margin-top:3px;font-size:.61rem;color:var(--muted)}
+.assistant-upload-company select{width:100%;height:42px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--navy);padding:0 9px;font-size:.68rem}
+.assistant-upload-form>button{height:42px!important;padding:0 15px!important}
+.assistant-upload-status{min-height:18px;margin:0;padding:2px 17px 7px;background:#f8fbf9;color:var(--muted);font-size:.65rem}
+.assistant-document-history{border-top:1px solid var(--line);background:#f8faf9}
+.assistant-document-history>summary{list-style:none;cursor:pointer;padding:10px 16px;color:var(--navy);font-size:.68rem;font-weight:800}.assistant-document-history>summary::-webkit-details-marker{display:none}.assistant-document-history>summary:after{content:"⌄";float:right;color:var(--green)}.assistant-document-history[open]>summary:after{content:"⌃"}.assistant-document-history>summary span{display:inline-grid;place-items:center;min-width:20px;height:20px;margin-left:5px;border-radius:999px;background:#e3f1ea;color:var(--green);font-size:.6rem}
+.assistant-document-history .document-list{max-height:300px;overflow:auto;margin:0;padding:0 14px 13px}.assistant-document-history .document-card{background:#fff}
+.chat-document-card{max-width:96%;margin:9px 0 13px;border-left:4px solid var(--green);box-shadow:0 8px 22px rgba(16,62,48,.08)}
+.chat-document-card .doc-record{line-height:1.5}.message.file-message:before{content:"📎";margin-right:7px}
+@media(max-width:850px){.assistant-upload-form{grid-template-columns:auto minmax(120px,1fr) auto!important}.assistant-upload-company{grid-column:2/3}.assistant-upload-form>button{grid-column:3;grid-row:1/3}.assistant-upload-file{grid-column:2}}
+@media(max-width:580px){.assistant-upload-form{grid-template-columns:auto 1fr!important;padding:10px 13px 5px!important}.assistant-upload-form>button{grid-column:1/3;grid-row:auto}.assistant-upload-company{grid-column:1/3}.assistant-upload-status{padding-left:14px}.chat-document-card{max-width:100%}}
+
 /* Finansal yön renkleri */
 .metrics .metric-cash{border-top:3px solid #3aa879}.metrics .metric-cash strong{color:#08734e}
 .metrics .metric-due-in{border-top:3px solid #65aee8;background:linear-gradient(145deg,#f4faff,#fff)}.metrics .metric-due-in strong{color:#247bb8}

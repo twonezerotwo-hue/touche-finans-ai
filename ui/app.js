@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const money = new Intl.NumberFormat("tr-TR", {style:"currency", currency:"TRY", maximumFractionDigits:2});
-const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, activeDraftToken:null};
+const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, activeDraftToken:null, renderedDocumentTokens:new Set()};
 
 function formatAmount(value,currency="TL"){
   const amount=Number(value||0);const code=String(currency||"TL").trim().toUpperCase();
@@ -232,7 +232,7 @@ async function runScenario(event){
 }
 
 function renderDocument(doc){
-  const card=document.createElement("article"); card.className="document-card";
+  const card=document.createElement("article"); card.className="document-card";card.dataset.token=doc.token||"";
   const head=document.createElement("div"); head.className="doc-head";
   const title=document.createElement("div"); const strong=document.createElement("strong"); strong.textContent=`${doc.firma} · ${doc.tur}`; const meta=document.createElement("div"); meta.className="doc-meta"; meta.textContent=`${doc.dosya} · ${doc.motor}`; title.append(strong,meta);
   const validation=document.createElement("span"); validation.className=`validation ${doc.dogrulama.durum||"FAIL"}`; validation.textContent=`${doc.dogrulama.durum||"HATA"} ${doc.dogrulama.skor}/100`; head.append(title,validation); card.appendChild(head);
@@ -241,28 +241,43 @@ function renderDocument(doc){
   [...doc.dogrulama.uyarilar,...doc.dogrulama.hatalar].slice(0,3).forEach(x=>{ const w=document.createElement("div"); w.className="warning"; w.textContent=x; card.appendChild(w); });
   if(doc.durum==="ONAY_BEKLIYOR"){
     const actions=document.createElement("div"); actions.className="doc-actions";
-    actions.append(button("Şifreyle Onayla","approve",()=>documentAction(doc.token,"onay")),button("Düzelt","",()=>toggleCorrection(card,doc.token)),button("Reddet","reject",()=>documentAction(doc.token,"reddet"))); card.appendChild(actions);
+    actions.append(button("Şifreyle Onayla","approve",()=>documentAction(doc.token,"onay",card)),button("Düzelt","",()=>toggleCorrection(card,doc.token)),button("Reddet","reject",()=>documentAction(doc.token,"reddet",card))); card.appendChild(actions);
   }else{ const status=document.createElement("div"); status.className="doc-meta"; status.textContent=`Durum: ${doc.durum}`; card.appendChild(status); }
   return card;
+}
+
+function renderDocumentInChat(doc,{announce=true}={}){
+  if(!doc?.token||state.renderedDocumentTokens.has(doc.token))return;
+  state.renderedDocumentTokens.add(doc.token);
+  if(announce)addMessage(`${doc.dosya} incelendi. Aşağıdaki kayıtları kontrol edin; siz şifreyle onaylamadan Excel'e hiçbir şey yazılmaz.`,"assistant");
+  const card=renderDocument(doc);card.classList.add("chat-document-card");
+  $("chat").appendChild(card);$("chat").scrollTop=$("chat").scrollHeight;
 }
 
 function toggleCorrection(card,token){
   const old=card.querySelector(".correction"); if(old){old.remove();return;}
   const box=document.createElement("div"); box.className="correction"; const area=document.createElement("textarea"); area.placeholder="Her satıra Alan=Değer yazın\nÖrnek: Tutar=12500,50\nCari=Örnek Firma";
-  box.append(area,button("Kontrol et","",async()=>{ try{ const changes={}; area.value.split(/\r?\n/).filter(Boolean).forEach(line=>{const pos=line.indexOf("=");if(pos<1)throw new Error(`Alan=Değer bekleniyor: ${line}`);changes[line.slice(0,pos).trim()]=line.slice(pos+1).trim();}); await jsonRequest(`/api/belge/${token}/duzelt`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({degisiklikler:changes})}); await loadDocuments(); addMessage("Belge düzeltildi ve yeniden doğrulandı.","assistant"); }catch(e){addMessage(`Düzeltme yapılamadı: ${e.message}`,"assistant");} })); card.appendChild(box); area.focus();
+  box.append(area,button("Kontrol et","",async()=>{ try{ const changes={}; area.value.split(/\r?\n/).filter(Boolean).forEach(line=>{const pos=line.indexOf("=");if(pos<1)throw new Error(`Alan=Değer bekleniyor: ${line}`);changes[line.slice(0,pos).trim()]=line.slice(pos+1).trim();}); const updated=await jsonRequest(`/api/belge/${token}/duzelt`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({degisiklikler:changes})});const replacement=renderDocument(updated);if(card.classList.contains("chat-document-card"))replacement.classList.add("chat-document-card");card.replaceWith(replacement);await loadDocuments(); addMessage("Belge düzeltildi ve yeniden doğrulandı.","assistant"); }catch(e){addMessage(`Düzeltme yapılamadı: ${e.message}`,"assistant");} })); card.appendChild(box); area.focus();
 }
 
-async function loadDocuments(){ const data=await jsonRequest("/api/belgeler"); const list=$("belgeler"); list.replaceChildren(); data.belgeler.slice(0,10).forEach(x=>list.appendChild(renderDocument(x))); }
-async function documentAction(token,action){
-  try{ const parola=action==="onay"?await requestApprovalPassword():null;if(action==="onay"&&parola===null)return;await jsonRequest(`/api/belge/${token}/${action}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(action==="onay"?{parola}:{})});addMessage(action==="onay"?"Belge Excel ve merkez finans defterine işlendi.":"Belge reddedildi; Excel'e yazılmadı.","assistant");await Promise.all([loadDocuments(),loadDashboard()]); }
+async function loadDocuments(showPendingInChat=false){ const data=await jsonRequest("/api/belgeler"); const docs=data.belgeler||[];const list=$("belgeler"); list.replaceChildren(); docs.slice(0,10).forEach(x=>list.appendChild(renderDocument(x)));$("documentCount").textContent=String(docs.length);if(showPendingInChat){const pending=docs.find(x=>x.durum==="ONAY_BEKLIYOR");if(pending)renderDocumentInChat(pending,{announce:true});} }
+async function documentAction(token,action,card=null){
+  try{ const parola=action==="onay"?await requestApprovalPassword():null;if(action==="onay"&&parola===null)return;await jsonRequest(`/api/belge/${token}/${action}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(action==="onay"?{parola}:{})});if(state.activeDraftToken===token)state.activeDraftToken=null;if(card){const actions=card.querySelector(".doc-actions");if(actions)actions.replaceWith(Object.assign(document.createElement("div"),{className:"doc-meta",textContent:action==="onay"?"Durum: TAMAMLANDI":"Durum: REDDEDILDI"}));}addMessage(action==="onay"?"Belge Excel ve merkez finans defterine işlendi.":"Belge reddedildi; Excel'e yazılmadı.","assistant");await Promise.all([loadDocuments(),loadDashboard()]); }
   catch(e){addMessage(`Belge işlemi başarısız: ${e.message}`,"assistant");}
 }
 
 async function uploadDocument(event){
-  event.preventDefault(); const file=$("dosya").files[0]; if(!file)return; const form=new FormData(); form.append("dosya",file); form.append("firma",$("uploadFirma").value); $("uploadButton").disabled=true; $("uploadStatus").textContent="Belge yapay zekâ ve doğrulama katmanı tarafından inceleniyor…";
-  try{ const doc=await jsonRequest("/api/upload",{method:"POST",body:form}); $("uploadStatus").textContent=`${doc.firma} için ${doc.dogrulama.durum} sonucu alındı. Onayınızı bekliyor.`; $("uploadForm").reset(); await loadDocuments(); addMessage(`${doc.dosya} okundu. Doğrulama: ${doc.dogrulama.durum} (${doc.dogrulama.skor}/100). Excel'e yazmadan önce kararınızı bekliyorum.`,"assistant"); }
-  catch(e){$("uploadStatus").textContent=`Belge işlenemedi: ${e.message}`;}
+  event.preventDefault(); const file=$("dosya").files[0]; if(!file)return; const form=new FormData(); form.append("dosya",file); form.append("firma",$("uploadFirma").value);addMessage(`Belge: ${file.name}`,"user","file-message"); $("uploadButton").disabled=true; $("uploadStatus").textContent="Belge okunuyor, finans kayıtları çıkarılıyor ve doğrulanıyor…";setAIStatus("Belge analiz ediliyor",true);
+  try{ const doc=await jsonRequest("/api/upload",{method:"POST",body:form}); $("uploadStatus").textContent=`${doc.firma} · ${doc.dogrulama.durum} ${doc.dogrulama.skor}/100 · onay bekliyor`; $("uploadForm").reset();updateSelectedDocumentFile();await loadDocuments();renderDocumentInChat(doc,{announce:true});setAIStatus("Belge taslağı hazır"); }
+  catch(e){$("uploadStatus").textContent=`Belge işlenemedi: ${e.message}`;addMessage(`Belge işlenemedi: ${e.message}`,"assistant");setAIStatus("Belge analizi başarısız");}
   finally{$("uploadButton").disabled=false;}
+}
+
+function updateSelectedDocumentFile(){
+  const file=$("dosya").files[0],box=$("uploadFile");
+  box.querySelector("strong").textContent=file?file.name:"Fatura, dekont veya görsel";
+  box.querySelector("span").textContent=file?`${(file.size/1024/1024).toLocaleString("tr-TR",{maximumFractionDigits:1})} MB · incelemeye hazır`:"PDF, JPG, PNG, WEBP veya BMP · en fazla 20 MB";
+  $("uploadStatus").textContent=file?"Belge seçildi. İsterseniz faaliyeti belirleyin veya yapay zekâya bırakın.":"";
 }
 
 async function loadRemoteUsers(){ const data=await jsonRequest("/api/remote/users"); const list=$("remoteUsers"); list.replaceChildren(); if(!data.kullanicilar.length){const s=document.createElement("span");s.textContent="Henüz kullanıcı yok.";list.appendChild(s);} data.kullanicilar.forEach(x=>{const row=document.createElement("div");row.className="remote-user";const name=document.createElement("span");name.textContent=x;row.append(name,button("Yetkiyi kaldır","",async()=>{await jsonRequest(`/api/remote/users/${encodeURIComponent(x)}`,{method:"DELETE"});await loadRemoteUsers();}));list.appendChild(row);}); }
@@ -285,12 +300,12 @@ document.addEventListener("DOMContentLoaded",async()=>{
   $("headerDate").textContent=new Intl.DateTimeFormat("tr-TR",{day:"2-digit",month:"long",year:"numeric"}).format(new Date());
   $("pairForm").addEventListener("submit",async e=>{e.preventDefault();try{await jsonRequest("/api/session/pair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kod:$("pairCode").value})});location.reload();}catch(err){$("pairError").textContent=err.message;}});
   if(!await checkSession())return;
-  try{ await loadActivities(); await Promise.all([loadDashboard(),loadDocuments(),loadProjectItems(),loadPendingChatDraft()]); }catch(e){ $("anaKarar").textContent=`Veri yüklenemedi: ${e.message}`; }
+  try{ await loadActivities(); await Promise.all([loadDashboard(),loadDocuments(true),loadProjectItems(),loadPendingChatDraft()]); }catch(e){ $("anaKarar").textContent=`Veri yüklenemedi: ${e.message}`; }
   $("faaliyet").addEventListener("change",()=>{state.lastIntent=null;state.lastContextQuestion=null;return Promise.all([loadDashboard(),loadProjectItems()]).catch(e=>addMessage(e.message,"assistant"));});
   ["risk","rezerv","vade"].forEach(id=>$(id).addEventListener("change",()=>loadDashboard().catch(e=>addMessage(e.message,"assistant"))));
   $("chatForm").addEventListener("submit",e=>{e.preventDefault();ask();}); document.querySelectorAll("[data-question]").forEach(b=>b.addEventListener("click",()=>ask(b.dataset.question)));
   $("scenarioForm").addEventListener("submit",runScenario);
-  $("uploadForm").addEventListener("submit",uploadDocument); $("dosya").addEventListener("change",()=>{const f=$("dosya").files[0];if(f)$("uploadStatus").textContent=`Seçilen dosya: ${f.name}`;});
+  $("uploadForm").addEventListener("submit",uploadDocument); $("dosya").addEventListener("change",updateSelectedDocumentFile);
   $("remoteButton").addEventListener("click",async()=>{await loadRemoteUsers();$("remoteDialog").showModal();}); $("remoteDialog").querySelector(".dialog-close").addEventListener("click",()=>$("remoteDialog").close());
   $("excelButton").addEventListener("click",()=>openExcelCenter().catch(e=>addMessage(`Excel merkezi açılamadı: ${e.message}`,"assistant")));$("excelDialog").querySelector(".dialog-close").addEventListener("click",()=>$("excelDialog").close());$("excelOpen").addEventListener("click",openExcelLocally);
   $("projectDialog").querySelector(".dialog-close").addEventListener("click",()=>$("projectDialog").close()); $("projectForm").addEventListener("submit",saveProjectItem);
@@ -303,5 +318,5 @@ document.addEventListener("DOMContentLoaded",async()=>{
   $("mappingForm").addEventListener("submit",e=>saveMapping(e).catch(err=>addMessage(`Hesap eşlemesi kaydedilemedi: ${err.message}`,"assistant")));
   ["transferDialog","fxDialog","periodDialog","governanceDialog"].forEach(id=>$(id).querySelector(".dialog-close").addEventListener("click",()=>$(id).close()));
   $("generateCode").addEventListener("click",async()=>{try{const d=await jsonRequest("/api/remote/code",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});$("remoteCode").textContent=d.kod;}catch(e){$("remoteCode").textContent=e.message;}});
-  ["dragenter","dragover"].forEach(n=>$("dropZone").addEventListener(n,e=>{e.preventDefault();$("dropZone").classList.add("drag");})); ["dragleave","drop"].forEach(n=>$("dropZone").addEventListener(n,e=>{$("dropZone").classList.remove("drag");}));
+  ["dragenter","dragover"].forEach(n=>$("dropZone").addEventListener(n,e=>{e.preventDefault();$("dropZone").classList.add("drag");})); $("dropZone").addEventListener("dragleave",()=>$("dropZone").classList.remove("drag"));$("dropZone").addEventListener("drop",e=>{e.preventDefault();$("dropZone").classList.remove("drag");if(e.dataTransfer?.files?.length){$("dosya").files=e.dataTransfer.files;updateSelectedDocumentFile();}});
 });

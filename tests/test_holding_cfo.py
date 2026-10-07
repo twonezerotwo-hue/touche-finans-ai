@@ -102,6 +102,21 @@ class HoldingCfoTestleri(unittest.TestCase):
         rapor = ticari.borclar(rapor_tarihi="2026-02-15")
         self.assertEqual(rapor["toplam"], 300_000.0)
 
+    def test_borc_yaslandirma_odemeyi_is_grubundan_duser(self):
+        self._fis("AP2", "2026-01-05", "Gider Tahakkuk", 140_000, "Saha betonu", vade="2026-02-01")
+        hazir = {
+            "belge_id": "PAY2", "firma_key": "gursar_mimarlik", "tur": "finans_belgesi",
+            "veri": {"kayitlar": [{
+                "Tarih": "2026-01-10", "Islem_Turu": "Usta/Tedarikçi Ödemesi", "Tutar": 55_000,
+                "PB": "TL", "Kur": 1, "Cari": "Medet İme", "Proje": "Gokturk Okulu",
+                "Aciklama": "Saha betonu ödemesi", "Hesap_Kasa": "Banka",
+            }]},
+        }
+        cekirdek.finans_kaydi_yaz(hazir, "test")
+        rapor = ticari.borclar(rapor_tarihi="2026-02-15")
+        self.assertEqual(rapor["toplam"], 85_000.0)
+        self.assertEqual(rapor["kalemler"][0]["cari"], "Saha betonu")
+
     # --- Double-entry + intercompany ---
     def test_cift_kayit_dengeli(self):
         self._fis("T1", "2026-01-05", "Hakedis", 500_000, "Musteri A")
