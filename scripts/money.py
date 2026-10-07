@@ -42,7 +42,7 @@ def _decimal(deger) -> Decimal:
         metin = metin.replace(",", ".")
     try:
         sonuc = Decimal(metin)
-    except (InvalidOperation, ValueError) as exc:  # noqa: F841
+    except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"Gecersiz tutar: {deger}") from exc
     if not sonuc.is_finite():
         raise ValueError(f"Sonlu olmayan tutar: {deger}")

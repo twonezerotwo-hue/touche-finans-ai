@@ -8,7 +8,7 @@ gecikmis kalemleri isaretler. Tutarlar kuruş tamsayisidir.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 from kurumsal_finans import cari_yaslandirma
 from money import tl_metin
@@ -56,7 +56,6 @@ def yaklasan_odemeler(faaliyet=None, bugun=None, gun: int = 30, limit: int = 50)
 
     veritabani_hazirla()
     bugun = bugun or date.today()
-    son = bugun + timedelta(days=max(1, int(gun)))
     where, args = ["s.hesap_kodu='320'", "TRIM(COALESCE(f.cari,''))<>''"], []
     if faaliyet and faaliyet not in {"tum", "touche_holding"}:
         where.append("f.faaliyet_key=?")

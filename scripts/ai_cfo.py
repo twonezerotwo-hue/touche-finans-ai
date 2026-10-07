@@ -10,7 +10,7 @@ finansal islemleri otomatik gerceklestirmez; onay gerekir.
 from __future__ import annotations
 
 import unicodedata
-from datetime import date, datetime
+from datetime import date
 
 from finans_motoru import boyut_kirilimi, holding_kpi, proje_karlilik
 from nakit_13hafta import nakit_13_hafta

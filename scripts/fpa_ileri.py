@@ -8,7 +8,6 @@ backend tarafinda yapilir; arayuz yalnizca sonucu gosterir.
 
 from __future__ import annotations
 
-import json
 import random
 from datetime import datetime
 

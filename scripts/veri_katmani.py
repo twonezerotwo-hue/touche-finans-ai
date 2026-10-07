@@ -103,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_fis_kategori ON fisler(kategori_id);
 @contextmanager
 def baglanti():
     """Merkezi defter baglantisi (test edilebilirlik icin DB_PATH yamalanabilir)."""
-    with cekirdek._baglanti() as con:  # noqa: SLF001 - bilincli paylasim
+    with cekirdek._baglanti() as con:  # bilincli paylasim
         yield con
 
 

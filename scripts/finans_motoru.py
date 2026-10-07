@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from money import Money, kurus, tl_metin, yuzde_metin
+from money import tl_metin, yuzde_metin
 from veri_katmani import baglanti, veritabani_hazirla
 
 NAKIT_HESAPLAR = ("100", "101", "102")

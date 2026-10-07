@@ -13,8 +13,8 @@ import json
 import uuid
 from datetime import datetime
 
-from finans_motoru import bakiye_ozeti, holding_kpi
-from money import tl_metin, yuzde_metin
+from finans_motoru import holding_kpi
+from money import tl_metin
 from veri_katmani import baglanti, veritabani_hazirla
 
 # (anahtar, etiket, tur) - tur: tutar / gun / yuzde

@@ -16,7 +16,6 @@ from kurumsal_finans import konsolide_mizan
 from nakit_13hafta import nakit_13_hafta
 from senaryo_motoru import senaryo_karsilastir
 from ticari import alacaklar, borclar
-from veri_katmani import baglanti, veritabani_hazirla
 
 
 def holding_overview(faaliyet=None) -> dict:
