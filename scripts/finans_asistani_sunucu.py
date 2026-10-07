@@ -48,6 +48,8 @@ import ai_cfo  # noqa: E402
 import raporlar  # noqa: E402
 from ai_cfo import insights_uret  # noqa: E402
 from belge_pipeline import kuyruk_durumu, kuyruga_ekle, pipeline_calistir  # noqa: E402
+from belge_pipeline import icerik_hash as belge_icerik_hash  # noqa: E402
+from belge_pipeline import mukerrer_kontrol as belge_mukerrer_kontrol  # noqa: E402
 from butce_forecast import butce_gerceklesen, taahhut_ozeti  # noqa: E402
 from finans_motoru import boyut_kirilimi, holding_kpi, is_kalemi_grid, proje_karlilik  # noqa: E402
 from fx_provider import kur_cevir  # noqa: E402
@@ -571,10 +573,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._kapsam_izinli(session, firma):
                     return self._json({"hata": "Bu faaliyet için yetkiniz yok."}, 403)
                 hedef = yuklenen_dosyayi_kaydet(dosya[0], dosya[1])
+                # Deterministik mukerrer kontrol (belge hatti upload rotasina bagli)
+                dup = belge_mukerrer_kontrol(belge_icerik_hash(dosya_yolu=hedef))
                 sonuc = belgeyi_hazirla(hedef, firma, session["kimlik"])
+                if dup["mukerrer"]:
+                    sonuc["mukerrer_uyari"] = dup
                 audit_db.kaydet("DOCUMENT_UPLOADED", actor=session.get("kimlik"),
                                 entity_type="belge", entity_id=sonuc.get("belge_id"),
-                                after={"firma": firma, "dosya": dosya[0]})
+                                after={"firma": firma, "dosya": dosya[0], "mukerrer": dup["mukerrer"]})
                 return self._json(sonuc, 201)
             if yol == "/api/remote/code":
                 if not session["yerel"]:
