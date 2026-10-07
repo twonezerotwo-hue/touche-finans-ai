@@ -35,10 +35,13 @@ HESAP_PLANI = (
     ("320", "Satıcılar", "YUKUMLULUK"),
     ("331", "Ortaklara Borçlar", "YUKUMLULUK"),
     ("335", "Personele Borçlar", "YUKUMLULUK"),
+    ("336", "Diğer Çeşitli Borçlar", "YUKUMLULUK"),
     ("391", "Hesaplanan KDV", "YUKUMLULUK"),
     ("500", "Sermaye", "OZKAYNAK"),
     ("600", "Yurtiçi Satışlar", "GELIR"),
+    ("646", "Kambiyo Karları", "GELIR"),
     ("649", "Diğer Olağan Gelirler", "GELIR"),
+    ("656", "Kambiyo Zararları", "GIDER"),
     ("740", "Hizmet Üretim Maliyeti", "GIDER"),
     ("770", "Genel Yönetim Giderleri", "GIDER"),
     ("780", "Finansman Giderleri", "GIDER"),
@@ -100,9 +103,53 @@ CREATE TABLE IF NOT EXISTS onay_oylari (
   belge_id TEXT NOT NULL, chat_id INTEGER NOT NULL, zaman TEXT NOT NULL,
   PRIMARY KEY(belge_id, chat_id)
 );
+CREATE TABLE IF NOT EXISTS hesap_eslemeleri (
+  faaliyet_key TEXT NOT NULL, yerel_hesap_kodu TEXT NOT NULL, grup_hesap_kodu TEXT NOT NULL,
+  aciklama TEXT, guncelleyen TEXT, guncelleme TEXT NOT NULL,
+  PRIMARY KEY(faaliyet_key, yerel_hesap_kodu),
+  FOREIGN KEY(faaliyet_key) REFERENCES faaliyetler(faaliyet_key),
+  FOREIGN KEY(grup_hesap_kodu) REFERENCES hesaplar(kod)
+);
+CREATE TABLE IF NOT EXISTS sirketler_arasi_islemler (
+  islem_id TEXT PRIMARY KEY, kaynak_faaliyet TEXT NOT NULL, hedef_faaliyet TEXT NOT NULL,
+  kaynak_fis_id TEXT NOT NULL, hedef_fis_id TEXT NOT NULL, tarih TEXT NOT NULL,
+  tutar_kurus INTEGER NOT NULL, para_birimi TEXT NOT NULL DEFAULT 'TL',
+  aciklama TEXT, durum TEXT NOT NULL DEFAULT 'AKTIF', olusturan TEXT, olusturma_zamani TEXT NOT NULL,
+  FOREIGN KEY(kaynak_faaliyet) REFERENCES faaliyetler(faaliyet_key),
+  FOREIGN KEY(hedef_faaliyet) REFERENCES faaliyetler(faaliyet_key)
+);
+CREATE TABLE IF NOT EXISTS kurlar (
+  tarih TEXT NOT NULL, para_birimi TEXT NOT NULL, kur_mikro INTEGER NOT NULL,
+  kaynak TEXT, guncelleyen TEXT, guncelleme TEXT NOT NULL,
+  PRIMARY KEY(tarih, para_birimi)
+);
+CREATE TABLE IF NOT EXISTS onay_kurallari (
+  kural_id TEXT PRIMARY KEY, faaliyet_key TEXT NOT NULL DEFAULT '*',
+  min_kurus INTEGER NOT NULL DEFAULT 0, max_kurus INTEGER,
+  gerekli_onay INTEGER NOT NULL DEFAULT 1, gerekli_roller TEXT NOT NULL DEFAULT '[]',
+  ayri_hazirlayan INTEGER NOT NULL DEFAULT 0, aktif INTEGER NOT NULL DEFAULT 1,
+  guncelleyen TEXT, guncelleme TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS onay_kararlari (
+  belge_id TEXT NOT NULL, aktor TEXT NOT NULL, rol TEXT NOT NULL,
+  karar TEXT NOT NULL DEFAULT 'ONAY', zaman TEXT NOT NULL,
+  PRIMARY KEY(belge_id, aktor)
+);
+CREATE TABLE IF NOT EXISTS belge_butunlugu (
+  belge_id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, finansal_hash TEXT,
+  kaynak TEXT, kayit_zamani TEXT NOT NULL, son_dogrulama TEXT, dogrulama_durumu TEXT
+);
+CREATE TABLE IF NOT EXISTS banka_eslestirme_gecmisi (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, hareket_id TEXT NOT NULL, fis_id TEXT,
+  eylem TEXT NOT NULL, skor INTEGER, aktor TEXT, zaman TEXT NOT NULL,
+  FOREIGN KEY(hareket_id) REFERENCES banka_hareketleri(hareket_id),
+  FOREIGN KEY(fis_id) REFERENCES fisler(fis_id)
+);
 CREATE INDEX IF NOT EXISTS idx_fis_tarih ON fisler(tarih);
 CREATE INDEX IF NOT EXISTS idx_fis_faaliyet ON fisler(faaliyet_key);
 CREATE INDEX IF NOT EXISTS idx_fis_cari ON fisler(cari);
+CREATE INDEX IF NOT EXISTS idx_sirketler_arasi_tarih ON sirketler_arasi_islemler(tarih);
+CREATE INDEX IF NOT EXISTS idx_banka_durum ON banka_hareketleri(durum);
 """
 
 
@@ -184,7 +231,7 @@ def _baglanti():
 def veritabanini_hazirla():
     with _baglanti() as con:
         con.executescript(SCHEMA)
-        con.execute("INSERT OR REPLACE INTO schema_meta VALUES('surum','1')")
+        con.execute("INSERT OR REPLACE INTO schema_meta VALUES('surum','2')")
         con.executemany("INSERT OR IGNORE INTO hesaplar(kod,ad,hesap_tipi) VALUES(?,?,?)", HESAP_PLANI)
         for key, firma in FIRMALAR.items():
             ad = firma.get("faaliyet") or firma.get("ad") or key
@@ -199,9 +246,27 @@ def veritabanini_hazirla():
                 "sahiplik_bps=excluded.sahiplik_bps,guncelleme=excluded.guncelleme",
                 (key, ad, None if key == "touche_holding" else "touche_holding", 1 if key == "touche_holding" else 0, bps, _simdi()),
             )
+            con.executemany(
+                "INSERT OR IGNORE INTO hesap_eslemeleri(faaliyet_key,yerel_hesap_kodu,grup_hesap_kodu,aciklama,guncelleyen,guncelleme) "
+                "VALUES(?,?,?,?,?,?)",
+                [(key, kod, kod, "Varsayılan ortak hesap planı", "sistem", _simdi()) for kod, _, _ in HESAP_PLANI],
+            )
         con.execute(
             "INSERT OR IGNORE INTO onay_politikasi(politika_id,limit_kurus,yuksek_tutar_onay,guncelleme) VALUES(1,25000000,1,?)",
             (_simdi(),),
+        )
+        con.execute(
+            "INSERT OR IGNORE INTO onay_kurallari(kural_id,faaliyet_key,min_kurus,max_kurus,gerekli_onay,gerekli_roller,ayri_hazirlayan,guncelleyen,guncelleme) "
+            "VALUES('VARSAYILAN','*',0,NULL,1,'[\"ONAYCI\",\"FINANS\",\"ADMIN\"]',0,'sistem',?)",
+            (_simdi(),),
+        )
+        con.execute(
+            "INSERT OR IGNORE INTO onay_kurallari(kural_id,faaliyet_key,min_kurus,max_kurus,gerekli_onay,gerekli_roller,ayri_hazirlayan,guncelleyen,guncelleme) "
+            "VALUES('YUKSEK_TUTAR','*',25000000,NULL,2,'[\"ONAYCI\",\"FINANS\",\"ADMIN\"]',0,'sistem',?)",
+            (_simdi(),),
+        )
+        con.execute(
+            "UPDATE onay_kurallari SET ayri_hazirlayan=0 WHERE kural_id='YUKSEK_TUTAR' AND guncelleyen='sistem'"
         )
 
 
@@ -212,34 +277,38 @@ def _donem_acik_mi(con, tarih):
 
 def _hesap_eslesmesi(kayit, tur):
     islem = _norm(kayit.get("Islem_Turu") or tur)
+    hesap_kasa = _norm(kayit.get("Hesap_Kasa"))
+    nakit_hesabi = "100" if "kasa" in hesap_kasa else "102"
     if "alacak duzeltme" in islem or "mahsup" in islem:
         return "600", "120"
     if "kredi kullanimi" in islem:
         return "102", "300"
+    if "cek teminatli borclanma" in islem or "diger finansal borc girisi" in islem:
+        return nakit_hesabi, "336"
     if "usta/tedarikci odemesi" in islem or "tedarikci odemesi" in islem:
-        return "320", "102"
+        return "320", nakit_hesabi
     if "ortak cepten gider" in islem:
         return "740", "331"
     if "ortak cari odemesi" in islem:
-        return "331", "102"
+        return "331", nakit_hesabi
     if "gider tahakkuk" in islem or tur == "fatura":
         return "740", "320"
     if "hakedis" in islem or "gelir tahakkuk" in islem:
         return "120", "600"
     if "tahsilat" in islem:
-        return "102", "120"
+        return nakit_hesabi, "120"
     if "cek alindi" in islem or tur == "cek":
         return "101", "120"
     if "ortak cari" in islem or "ortak odeme" in islem:
-        return "331", "102"
+        return "331", nakit_hesabi
     if "banka masraf" in islem or "finansman" in islem:
         return "780", "102"
     if "kredi" in islem:
         return "300", "102"
     if "usta" in islem or "odeme" in islem or "gider" in islem:
-        return "740", "102"
+        return "740", nakit_hesabi
     if "gelir" in islem:
-        return "102", "649"
+        return nakit_hesabi, "649"
     return "799", "102"
 
 
@@ -293,6 +362,29 @@ def finans_kaydi_yaz(hazir, onaylayan="sistem"):
     if not taslaklar:
         return {"basari": True, "fis_sayisi": 0, "fisler": []}
     with _baglanti() as con:
+        finansal_ham = json.dumps(
+            hazir.get("veri", {}).get("kayitlar", []), ensure_ascii=False,
+            sort_keys=True, separators=(",", ":"), default=str,
+        )
+        finansal_hash = hashlib.sha256(finansal_ham.encode("utf-8")).hexdigest()
+        belge_hash = str(hazir.get("belge_hash") or "").strip().lower()
+        if not belge_hash:
+            for kayit in hazir.get("veri", {}).get("kayitlar", []):
+                aday = str(kayit.get("_hash") or "").strip().lower()
+                if len(aday) == 64:
+                    belge_hash = aday
+                    break
+        if len(belge_hash) != 64:
+            belge_hash = finansal_hash
+        mevcut_manifest = con.execute(
+            "SELECT sha256,finansal_hash FROM belge_butunlugu WHERE belge_id=?",
+            (str(hazir.get("belge_id")),),
+        ).fetchone()
+        if mevcut_manifest and (
+            mevcut_manifest["sha256"] != belge_hash
+            or mevcut_manifest["finansal_hash"] != finansal_hash
+        ):
+            raise ValueError("Belge kimliği daha önce farklı içerikle kaydedilmiş.")
         for fis in taslaklar:
             mevcut = con.execute("SELECT fis_id FROM fisler WHERE belge_id=? AND kayit_sira=?", (fis["belge_id"], fis["sira"])).fetchone()
             if mevcut:
@@ -308,6 +400,13 @@ def finans_kaydi_yaz(hazir, onaylayan="sistem"):
                 "INSERT INTO fis_satirlari(fis_id,satir_no,hesap_kodu,borc_kurus,alacak_kurus,aciklama) VALUES(?,?,?,?,?,?)",
                 [(fis["fis_id"], no, s["hesap"], s["borc"], s["alacak"], s["aciklama"]) for no, s in enumerate(fis["satirlar"], 1)],
             )
+        con.execute(
+            "INSERT OR IGNORE INTO belge_butunlugu(belge_id,sha256,finansal_hash,kaynak,kayit_zamani,dogrulama_durumu) "
+            "VALUES(?,?,?,?,?,?)",
+            (str(hazir.get("belge_id")), belge_hash, finansal_hash,
+             str(hazir.get("foto_yolu") or hazir.get("kaynak_metin") or ""), _simdi(),
+             str((hazir.get("dogrulama") or {}).get("durum") or "KAYITLI")),
+        )
         ids = [x["fis_id"] for x in taslaklar]
     return {"basari": True, "fis_sayisi": len(ids), "fisler": ids}
 
@@ -474,7 +573,7 @@ def yonetim_ozeti(faaliyet=None, yil=None, ay=None):
     gider = sum(r["borc"] - r["alacak"] for r in rows if r["hesap_tipi"] == "GIDER")
     nakit = sum(r["borc"] - r["alacak"] for r in rows if r["hesap_kodu"] in ("100", "102"))
     alacak = sum(r["borc"] - r["alacak"] for r in rows if r["hesap_kodu"] in ("120", "131"))
-    borc = sum(r["alacak"] - r["borc"] for r in rows if r["hesap_kodu"] in ("300", "320", "331", "335"))
+    borc = sum(r["alacak"] - r["borc"] for r in rows if r["hesap_kodu"] in ("300", "320", "331", "335", "336"))
     return {"gelir": gelir/100, "gider": gider/100, "net": (gelir-gider)/100,
             "nakit": nakit/100, "alacak": alacak/100, "borc": borc/100}
 
@@ -517,7 +616,7 @@ def nakit_tahmini(hafta=13, faaliyet=None, bugun=None):
         rows = con.execute(
             "SELECT f.vade,s.hesap_kodu,s.borc_kurus,s.alacak_kurus FROM fisler f "
             "JOIN fis_satirlari s ON s.fis_id=f.fis_id WHERE " + " AND ".join(where) +
-            " AND s.hesap_kodu IN ('120','300','320','331')", args,
+            " AND s.hesap_kodu IN ('120','300','320','331','336')", args,
         ).fetchall()
     gruplar = {}
     for r in rows:
@@ -635,6 +734,13 @@ def politika_ayarla(limit_tl, onay_sayisi, aktor):
     with _baglanti() as con:
         con.execute("UPDATE onay_politikasi SET limit_kurus=?,yuksek_tutar_onay=?,guncelleyen=?,guncelleme=? WHERE politika_id=1",
                     (limit_kurus, onay, str(aktor), _simdi()))
+        con.execute(
+            "INSERT INTO onay_kurallari(kural_id,faaliyet_key,min_kurus,max_kurus,gerekli_onay,gerekli_roller,ayri_hazirlayan,aktif,guncelleyen,guncelleme) "
+            "VALUES('YUKSEK_TUTAR','*',?,NULL,?,'[\"ONAYCI\",\"FINANS\",\"ADMIN\"]',0,1,?,?) "
+            "ON CONFLICT(kural_id) DO UPDATE SET min_kurus=excluded.min_kurus,gerekli_onay=excluded.gerekli_onay,"
+            "guncelleyen=excluded.guncelleyen,guncelleme=excluded.guncelleme",
+            (limit_kurus, onay, str(aktor), _simdi()),
+        )
 
 
 def onay_oyu_ekle(belge_id, chat_id, toplam_tl):

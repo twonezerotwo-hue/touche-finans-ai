@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 import sys
+import base64
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -46,6 +49,20 @@ class UiBelgeTestleri(unittest.TestCase):
         with self.assertRaises(ValueError):
             belge.yuklenen_dosyayi_kaydet("zararli.exe", b"test")
 
+    def test_excel_onay_parolasi_pbkdf2_ile_dogrulanir(self):
+        with tempfile.TemporaryDirectory() as d:
+            yol = Path(d) / "onay.json"
+            tuz = b"test-tuzu-12345"
+            ozet = hashlib.pbkdf2_hmac("sha256", b"123456", tuz, 1000)
+            kodla = lambda x: base64.urlsafe_b64encode(x).decode().rstrip("=")
+            yol.write_text(json.dumps({
+                "algoritma": "pbkdf2_sha256", "iterasyon": 1000,
+                "tuz": kodla(tuz), "ozet": kodla(ozet),
+            }), encoding="utf-8")
+            with patch.object(belge, "ONAY_PAROLASI_DOSYASI", yol):
+                self.assertTrue(belge._onay_parolasi_dogru_mu("123456"))
+                self.assertFalse(belge._onay_parolasi_dogru_mu("654321"))
+
     def test_hazir_belge_onay_kuyruguna_girer(self):
         hazir = {
             "basari": True, "foto_yolu": "C:/temp/fatura.pdf", "model_yolu": "C:/temp/fatura.jpg",
@@ -58,6 +75,39 @@ class UiBelgeTestleri(unittest.TestCase):
             sonuc = belge.belgeyi_hazirla(Path(d) / "fatura.pdf", "touche_holding", "test-user")
         self.assertEqual(sonuc["durum"], "ONAY_BEKLIYOR")
         self.assertEqual(sonuc["dogrulama"]["durum"], "PASS")
+
+    def test_eski_ham_risk_notu_okunur_metne_cevrilir(self):
+        belge._BEKLEYEN = {"abc": {
+            "token": "abc", "durum": "ONAY_BEKLIYOR", "olusturma": "2026-10-05T12:00:00",
+            "kaynak_turu": "sohbet", "hazir": {
+                "firma_key": "gursar_mimarlik", "tur": "sohbet_kaydi", "veri": {"kayitlar": []},
+                "dogrulama": {
+                    "durum": "REVIEW", "skor": 84, "hatalar": [],
+                    "uyarilar": ["AI kayıt notu: {'mesaj': '300.000 TL koşullu nakit rezervi gerekebilir.'}"],
+                },
+            },
+        }}
+        sonuc = belge.ozet("abc")
+        self.assertEqual(
+            sonuc["dogrulama"]["uyarilar"],
+            ["AI kayıt notu: 300.000 TL koşullu nakit rezervi gerekebilir."],
+        )
+
+    def test_kismi_onay_durumu_ozette_korunur(self):
+        belge._BEKLEYEN = {"abc": {
+            "token": "abc", "durum": "ONAY_BEKLIYOR", "olusturma": "2026-10-05T12:00:00",
+            "kaynak_turu": "sohbet",
+            "onay": {"gerekli": 2, "mevcut": 1, "tamam": False, "kararlar": [
+                {"aktor": "owner@example.com", "rol": "ONAYCI", "karar": "ONAY"}
+            ]},
+            "hazir": {
+                "firma_key": "gursar_mimarlik", "tur": "sohbet_kaydi", "veri": {"kayitlar": []},
+                "dogrulama": {"durum": "REVIEW", "skor": 84, "hatalar": [], "uyarilar": []},
+            },
+        }}
+        sonuc = belge.ozet("abc")
+        self.assertEqual(sonuc["onay"]["mevcut"], 1)
+        self.assertEqual(sonuc["onay"]["gerekli"], 2)
 
 
 if __name__ == "__main__":

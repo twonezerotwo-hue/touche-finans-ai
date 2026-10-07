@@ -43,7 +43,7 @@ from recete_motoru import recete_calistir, recete_listele
 from finans_cekirdegi import (
     acilis_bakiyesi_kaydet, banka_csv_aktar, belgeyi_ters_kaydet, butce_kaydet, butce_raporu,
     cari_bakiyeleri, donem_durum_degistir, kullanici_rolu, muhasebe_csv_export,
-    mizan, mutabakat_ozeti, nakit_tahmini, onay_oyu_ekle, politika_ayarla, rol_ata,
+    mizan, mutabakat_ozeti, nakit_tahmini, politika_ayarla, rol_ata,
     senkron_kuyrugunu_isle, sistem_kontrolu, veritabani_yedekle,
     veritabanini_hazirla, yonetim_ozeti,
 )
@@ -608,18 +608,10 @@ async def buton_cevabi(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _durum_kaydet()
                 await query.edit_message_text("İptal işleminden vazgeçildi.")
                 return
-            await query.edit_message_text("Kayıtlar güvenli şekilde iptal ediliyor...")
-            sonuc = belge_kaydini_iptal_et(istek["belge_id"])
-            if sonuc["basari"]:
-                try:
-                    belgeyi_ters_kaydet(istek["belge_id"], f"telegram:{chat_id}")
-                except Exception as exc:
-                    await context.bot.send_message(chat_id=chat_id, text=f"Excel iptal edildi; ters muhasebe kaydı uyarısı: {str(exc)[:400]}")
-                IPTAL_BEKLEYEN.pop(token, None)
-                _durum_kaydet()
-                await context.bot.send_message(chat_id=chat_id, text=f"İptal tamamlandı. Etkilenen satır: {sonuc['etkilenen']}")
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=f"İptal başarısız: {sonuc['hata'][:500]}")
+            await query.edit_message_text(
+                "Excel kayıt iptali yalnız CFO web panelindeki onay şifresiyle yapılabilir. "
+                "Bu nedenle Telegram üzerinden değişiklik uygulanmadı."
+            )
             return
 
         eylem, token = data.split(":", 1)
@@ -634,22 +626,10 @@ async def buton_cevabi(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if eylem == "onay":
-            oy = onay_oyu_ekle(hazir["belge_id"], chat_id, _belge_toplami(hazir))
-            if not oy["tamam"]:
-                await query.edit_message_text(f"Onay kaydedildi: {oy['mevcut']}/{oy['gerekli']}. İkinci yetkili bekleniyor.")
-                for diger in YETKILI_CHAT_IDS:
-                    if int(diger) != int(chat_id):
-                        await context.bot.send_message(chat_id=diger, text=_belge_ozeti(hazir), reply_markup=_onay_butonlari(token))
-                return
-            await query.edit_message_text("Onay alındı; güvenli Excel kaydı yapılıyor...")
-            basarili, mesaj = hazirlanan_belgeyi_yaz(hazir, onay_kaynagi=f"telegram:{chat_id}")
-            if basarili:
-                BEKLEYEN_ONAYLAR.pop(token, None)
-                _durum_kaydet()
-                await context.bot.send_message(chat_id=chat_id, text=f"Başarılı! Belge {FIRMALAR[hazir['firma_key']]['ad']} sistemine kaydedildi.")
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=f"Excel kaydı başarısız.\n\n{mesaj[:1000]}")
-                await context.bot.send_message(chat_id=chat_id, text=_belge_ozeti(hazir), reply_markup=_onay_butonlari(token))
+            await query.edit_message_text(
+                "Excel'e yazma işlemi artık yalnız CFO web panelindeki 'Şifreyle Onayla' "
+                "düğmesiyle yapılabilir. Telegram üzerinden Excel değiştirilmedi."
+            )
             return
 
         if eylem == "reddet":

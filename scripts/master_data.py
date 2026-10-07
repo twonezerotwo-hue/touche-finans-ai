@@ -9,6 +9,23 @@ from faaliyet_sema import anahtar
 
 log = logging.getLogger(__name__)
 
+# Excel tanimlarina ilk onayli kayit sirasinda eklenecek sistem kontrollu
+# degerler. Boylece bir kisiden cek teminatiyla alinan para banka kredisi gibi
+# raporlanmaz; elden ve sahsi hesaba gelen tutarlar da banka/kasa ayrimini korur.
+SISTEM_ISLEM_TURLERI = ["Çek Teminatlı Borçlanma"]
+# 99_Ayarlar!U:AA sırasıyla Gelir, Gider, Alacak, Borç, Çek, Nakit ve
+# Ortak/IC Cari katsayılarını tutar. Çek karşılığında alınan para gelir değil;
+# kasa/bankayı ve aynı tutardaki finansal borcu artırır.
+SISTEM_ISLEM_ETKILERI = {
+    "Çek Teminatlı Borçlanma": (0, 0, 0, 1, 0, 1, 0),
+}
+GURSAR_SISTEM_HESAPLARI = [
+    "Gürsar TL Kasa",
+    "Gürsar USD Kasa",
+    "Canfurkan Şensoy TL Banka",
+]
+GURSAR_SISTEM_PROJELERI = ["Gürsar Faaliyet Geneli"]
+
 # Çöp filtresi (proje/cari listesinden atılacaklar)
 GURULTU_KELIMELER = {
     "TOPLAM", "TOTAL", "CİRO", "CIRO", "ALACAK", "BORÇ", "BORC",
@@ -145,14 +162,42 @@ def _oku_touche(wb):
     ]
 
     # İşlem türleri: T6:T22
-    md["islem_turleri"] = _oku_sutun(ws, "T", 6, 23,
+    md["islem_turleri"] = _oku_sutun(ws, "T", 6, 31,
                                       filtre=lambda x: not _gurultu_mu(x))
+    md["islem_turleri"] = list(dict.fromkeys(md["islem_turleri"] + SISTEM_ISLEM_TURLERI))
 
     # Kurlar: AD3 (PB), AE3 (Kur)
     kur_ciftleri = _oku_2d(ws, "AD", "AE", 3, 8)
     md["kurlar"] = {pb: kur for pb, kur in kur_ciftleri if kur is not None}
 
+    # Benzer bir cari/işlem daha önce doğru şekilde kaydedildiyse sohbet
+    # asistanı aynı proje ve hesabı güvenli biçimde önerebilsin. Yalnızca
+    # onaylanmış ana defter satırları okunur; tutar ve tarih asla buradan
+    # kopyalanmaz.
+    md["kayit_gecmisi"] = _oku_ana_ledger_gecmisi(wb)
+
     return md
+
+
+def _oku_ana_ledger_gecmisi(wb, limit=1000):
+    if "03_Kayıt Merkezi" not in wb.sheetnames:
+        return []
+    ws = wb["03_Kayıt Merkezi"]
+    satirlar = []
+    ilk = max(6, ws.max_row - limit + 1)
+    for satir in range(ilk, ws.max_row + 1):
+        if not ws[f"A{satir}"].value:
+            continue
+        satirlar.append({
+            "faaliyet": str(ws[f"C{satir}"].value or "").strip(),
+            "proje": str(ws[f"D{satir}"].value or "").strip(),
+            "cari_tipi": str(ws[f"E{satir}"].value or "").strip(),
+            "cari": str(ws[f"F{satir}"].value or "").strip(),
+            "islem_turu": str(ws[f"G{satir}"].value or "").strip(),
+            "hesap_kasa": str(ws[f"H{satir}"].value or "").strip(),
+            "pb": str(ws[f"J{satir}"].value or "TL").strip().upper(),
+        })
+    return satirlar
 
 
 def _faaliyete_filtrele(md, firma_key):
@@ -174,8 +219,22 @@ def _faaliyete_filtrele(md, firma_key):
     sonuc["hesaplar"] = list(dict.fromkeys(k["hesap"] for k in sonuc["hesap_hiyerarsisi"]))
     sonuc["cari_hiyerarsisi"] = [k for k in md["cari_hiyerarsisi"] if ait(k)]
     sonuc["cariler"] = list(dict.fromkeys(k["cari"] for k in sonuc["cari_hiyerarsisi"]))
+    sonuc["kayit_gecmisi"] = [k for k in md.get("kayit_gecmisi", []) if ait(k)]
     if firma_key == "gursar_mimarlik":
         sonuc["maliyet_gruplari"] = ["Taş işleri", "Saha betonu", "Ortak cari", "Diğer"]
+        faaliyet = sonuc["faaliyetler"][0]
+        mevcut_projeler = {anahtar(x) for x in sonuc["projeler"]}
+        for proje in GURSAR_SISTEM_PROJELERI:
+            if anahtar(proje) not in mevcut_projeler:
+                sonuc["projeler"].append(proje)
+                sonuc["proje_hiyerarsisi"].append({"faaliyet": faaliyet, "proje": proje})
+                mevcut_projeler.add(anahtar(proje))
+        mevcut_hesaplar = {anahtar(x) for x in sonuc["hesaplar"]}
+        for hesap in GURSAR_SISTEM_HESAPLARI:
+            if anahtar(hesap) not in mevcut_hesaplar:
+                sonuc["hesaplar"].append(hesap)
+                sonuc["hesap_hiyerarsisi"].append({"faaliyet": faaliyet, "hesap": hesap})
+                mevcut_hesaplar.add(anahtar(hesap))
     return sonuc
 
 
@@ -257,6 +316,7 @@ def _bos_master_data():
         "proje_hiyerarsisi": [],
         "hesap_hiyerarsisi": [],
         "cari_hiyerarsisi": [],
+        "kayit_gecmisi": [],
     }
 
 

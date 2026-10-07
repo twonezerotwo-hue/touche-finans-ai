@@ -12,6 +12,23 @@ from faaliyet_sema import firma_tanimi
 
 # === KLASOR YAPISI ===
 BASE_DIR = Path(r"C:\ai-excel")
+
+
+def _yerel_env_yukle(env_yolu):
+    """Git'e girmeyen yerel .env ayarlarını mevcut ortamı ezmeden yükler."""
+    if not env_yolu.exists():
+        return
+    for ham_satir in env_yolu.read_text(encoding="utf-8").splitlines():
+        satir = ham_satir.strip()
+        if not satir or satir.startswith("#") or "=" not in satir:
+            continue
+        anahtar, deger = satir.split("=", 1)
+        anahtar, deger = anahtar.strip(), deger.strip().strip('"').strip("'")
+        if anahtar:
+            os.environ.setdefault(anahtar, deger)
+
+
+_yerel_env_yukle(BASE_DIR / ".env")
 SCRIPTS_DIR = BASE_DIR / "scripts"
 FIRMALAR_DIR = BASE_DIR / "firmalar"
 GELEN_EVRAK = BASE_DIR / "gelen_evrak"
@@ -25,6 +42,7 @@ TELEGRAM_PAIRING_CODE = LOGLAR / 'telegram_eslestirme.txt'
 TEMP_DIR = BASE_DIR / "temp"
 VERI_DIR = BASE_DIR / "veri"
 FINANS_DB = VERI_DIR / "finans.db"
+ONAY_PAROLASI_DOSYASI = VERI_DIR / "onay_parolasi.json"
 MUHASEBE_EXPORT_DIR = BASE_DIR / "muhasebe_export"
 EXCEL_INDEX_DIR = VERI_DIR / "excel_index"
 RECETE_DIR = BASE_DIR / "receteler"
@@ -46,6 +64,10 @@ WITAN_REMOTE_ENABLED = os.environ.get("WITAN_REMOTE_ENABLED", "").strip().lower(
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "qwen2.5vl:7b"
 TEXT_MODEL = os.environ.get("OLLAMA_TEXT_MODEL", "qwen3:8b")
+TEXT_LLM_PROVIDER = os.environ.get("TEXT_LLM_PROVIDER", "ollama").strip().lower()
+EVREN_API_KEY = os.environ.get("EVREN_API_KEY", "").strip()
+EVREN_API_BASE = os.environ.get("EVREN_API_BASE", "https://evren-llmapi.ssyz.org.tr/v1").rstrip("/")
+EVREN_MODEL = os.environ.get("EVREN_MODEL", "auto").strip() or "auto"
 TIMEOUT = 180
 
 # === GORSEL ON ISLEME ===

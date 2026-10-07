@@ -285,12 +285,13 @@ class Phase1Testleri(unittest.TestCase):
             "Tedarikci": "Başka Tedarikçi", "Urun": "Malzeme",
             "Miktar": 2, "Birim_Fiyat": 500, "Toplam": 1000,
         }]}
+        ham_okuma = {"metin": "26.09.2026 ABC2026000002 Başka Tedarikçi Malzeme 2 500 1000"}
         with patch.object(belge_main, "invoice2data_oku", return_value={"eslesti": False, "sebep": "eslesme_yok"}), \
-                patch.object(belge_main, "modele_sor", return_value=ai_ciktisi) as qwen:
+                patch.object(belge_main, "modele_sor", side_effect=[ham_okuma, ai_ciktisi]) as qwen:
             hazir = belge_main.belge_hazirla(belge, "touche_holding", "fatura")
         self.assertTrue(hazir["basari"], hazir)
         self.assertEqual(hazir["cikarim_motoru"], "qwen2.5vl")
-        qwen.assert_called_once()
+        self.assertEqual(qwen.call_count, 2)
 
     def test_merkezi_defter_dengeli_donem_kilitli_ve_ters_kayitli(self):
         hazir = {"belge_id": "DB-001", "firma_key": "gursar_mimarlik", "tur": "odeme_dekontu", "veri": {"kayitlar": [{

@@ -30,6 +30,7 @@ gelen_evrak/
 loglar/
 muhasebe_export/
 temp/
+tmp/
 veri/
 
 # Editor / OS

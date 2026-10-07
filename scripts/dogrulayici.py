@@ -20,6 +20,7 @@ FAIL = "FAIL"
 
 BEKLENEN_ALANLAR = {
     "touche_holding": {
+        "sohbet_kaydi": ["Tarih", "Faaliyet", "Cari_Tipi", "Cari", "Islem_Turu", "Tutar", "PB", "Kur"],
         "irsaliye": ["Tarih", "Irsaliye_No", "Tedarikci", "Urun", "Miktar", "Birim"],
         "fatura": ["Tarih", "Fatura_No", "Tedarikci", "Urun", "Miktar", "Birim_Fiyat", "Toplam"],
         "banka_dekontu": ["Tarih", "Gonderen", "Alici", "Tutar"],
@@ -36,6 +37,7 @@ BEKLENEN_ALANLAR = {
         "sevk_irsaliye": ["Tarih", "Sevk_No", "Tedarikci", "Alici"],
     },
     "gursar_mimarlik": {
+        "sohbet_kaydi": ["Tarih", "Faaliyet", "Proje", "Cari_Tipi", "Cari", "Islem_Turu", "Tutar", "PB", "Kur"],
         "odeme_dekontu": ["Tarih", "Cari", "Islem_Turu", "Tutar"],
     },
 }
@@ -83,6 +85,8 @@ def _normalize_kayit(kayit, beklenen_alanlar):
 def _kanonik_alanlari_tamamla(kayit, firma_key, tur):
     """Excel katmaninin ortak alanlarini yalnizca acik veriden turetir."""
     firma = FIRMALAR.get(firma_key, {})
+    if not kayit.get("PB"):
+        kayit["PB"] = _para_birimi_bul(kayit.get("Tutar")) or "TL"
     if firma.get('adapter') == 'standart_v1':
         kayit['Faaliyet'] = kayit.get('Faaliyet') or firma['faaliyet']
         kayit['PB'] = kayit.get('PB') or firma['pb']
@@ -91,13 +95,17 @@ def _kanonik_alanlari_tamamla(kayit, firma_key, tur):
             kayit['Kur'] = 1
         return
     if firma_key == "gursar_mimarlik":
-        kayit.setdefault("Faaliyet", "Gürsar İnşaat")
-        kayit.setdefault("PB", "TL")
-        kayit.setdefault("Cari_Tipi", _gursar_cari_tipi(kayit.get("Islem_Turu")))
-        kayit.setdefault("Hesap_Kasa", "Gürsar TL Banka")
+        kayit["Faaliyet"] = kayit.get("Faaliyet") or "Gürsar İnşaat"
+        kayit["PB"] = kayit.get("PB") or "TL"
+        kayit["Cari_Tipi"] = kayit.get("Cari_Tipi") or _gursar_cari_tipi(kayit.get("Islem_Turu"))
+        # Belge adaptörlerinde eski varsayılanı koru. Sohbet kaydında ise
+        # banka/kasa ayrımı finansal sonucu değiştirdiğinden tahmin etme;
+        # açık metinden veya güvenli benzer kayıt eşleşmesinden gelmelidir.
+        if tur != "sohbet_kaydi":
+            kayit["Hesap_Kasa"] = kayit.get("Hesap_Kasa") or "Gürsar TL Banka"
         return
 
-    kayit.setdefault("PB", "TL")
+    kayit["PB"] = kayit.get("PB") or "TL"
     if not kayit.get("Cari"):
         for alan in ("Tedarikci", "Firma", "Alici", "Alan", "Kesideci", "Sigortali", "Sahibi"):
             if kayit.get(alan):
@@ -128,16 +136,71 @@ def _gursar_cari_tipi(islem_turu):
     }.get(str(islem_turu or "").strip(), "")
 
 
+def _para_birimi_bul(deger):
+    """Tutar metnindeki acik para birimini kanonik koda cevirir."""
+    metin = str(deger or "").upper()
+    if "USDT" in metin:
+        return "USDT"
+    if "USD" in metin or "$" in metin:
+        return "USD"
+    if "EUR" in metin or "€" in metin:
+        return "EUR"
+    if "TRY" in metin or " TL" in f" {metin}" or "₺" in metin:
+        return "TL"
+    return ""
+
+
 def _tutar_cevir(deger):
+    """Turkce/uluslararasi yazilmis para tutarini Decimal'e cevirir.
+
+    Ornekler: ``67.000 TL``, ``2.275,50 ₺``, ``2,275.50 USD``,
+    ``300 bin TL`` ve ``2,5 milyon``.
+    """
     if deger in (None, ""):
         return None
-    metin = str(deger).strip().replace(" ", "").replace("₺", "")
+    if isinstance(deger, Decimal):
+        return deger
+    metin = str(deger).strip().casefold().replace("−", "-").replace("–", "-")
+    carpan = Decimal("1")
+    if re.search(r"\bmilyar\b", metin):
+        carpan = Decimal("1000000000")
+    elif re.search(r"\bmilyon\b", metin):
+        carpan = Decimal("1000000")
+    elif re.search(r"\bbin\b", metin) or re.search(r"(?<=\d)\s*k\b", metin):
+        carpan = Decimal("1000")
+    metin = re.sub(r"\b(?:try|tl|usd|usdt|eur|turk\s*lirasi|türk\s*lirası|lira)\b", "", metin)
+    metin = re.sub(r"\b(?:bin|milyon|milyar)\b", "", metin)
+    metin = metin.replace("₺", "").replace("$", "").replace("€", "")
+    metin = re.sub(r"(?<=\d)\s*k\b", "", metin)
+    metin = re.sub(r"[^0-9,\.\-+]", "", metin)
+    if not metin or metin in {"-", "+"}:
+        return None
+
     if "," in metin and "." in metin:
-        metin = metin.replace(".", "").replace(",", ".")
-    elif "," in metin:
-        metin = metin.replace(",", ".")
+        # Son ayirac ondalik, digerleri binlik kabul edilir.
+        ondalik = "," if metin.rfind(",") > metin.rfind(".") else "."
+        binlik = "." if ondalik == "," else ","
+        metin = metin.replace(binlik, "")
+        if ondalik != ".":
+            metin = metin.replace(ondalik, ".")
+    elif "," in metin or "." in metin:
+        ayirac = "," if "," in metin else "."
+        parcalar = metin.split(ayirac)
+        if len(parcalar) > 2:
+            if all(len(x) == 3 for x in parcalar[1:]):
+                metin = "".join(parcalar)
+            else:
+                metin = "".join(parcalar[:-1]) + "." + parcalar[-1]
+        else:
+            tam, kesir = parcalar
+            # 67.000 / 1,250 gibi yaygin binlik yazimlarini koru;
+            # 0,125 ve 48,4305 gibi degerleri ondalik say.
+            if len(kesir) == 3 and tam.lstrip("+-") not in {"", "0"} and len(tam.lstrip("+-")) <= 3:
+                metin = tam + kesir
+            else:
+                metin = tam + "." + kesir
     try:
-        return Decimal(metin)
+        return Decimal(metin) * carpan
     except (InvalidOperation, ValueError):
         return None
 
@@ -164,6 +227,7 @@ def _listede(deger, liste):
 
 def _master_data_kontrol(kayit, md, firma_key, sira):
     uyarilar = []
+    yeni_cari = bool(kayit.get("_yeni_cari"))
     faaliyet = kayit.get("Faaliyet")
     proje = kayit.get("Proje")
     cari_tipi = kayit.get("Cari_Tipi")
@@ -179,9 +243,10 @@ def _master_data_kontrol(kayit, md, firma_key, sira):
                     for x in md["proje_hiyerarsisi"])
         if not uygun:
             uyarilar.append(f"Kayit {sira}: faaliyet/proje hiyerarsisi gecersiz -> {faaliyet} / {proje}")
-    if cari_tipi and md["cari_tipler"] and not _listede(cari_tipi, md["cari_tipler"]):
+    if (cari_tipi and md["cari_tipler"] and not _listede(cari_tipi, md["cari_tipler"])
+            and not (yeni_cari and _norm(cari_tipi) == "diger")):
         uyarilar.append(f"Kayit {sira}: cari tipi master data'da yok -> {cari_tipi}")
-    if cari and md["cariler"] and not _listede(cari, md["cariler"]):
+    if cari and md["cariler"] and not _listede(cari, md["cariler"]) and not yeni_cari:
         uyarilar.append(f"Kayit {sira}: cari master data'da yok -> {cari}")
     if islem and md["islem_turleri"] and not _listede(islem, md["islem_turleri"]):
         uyarilar.append(f"Kayit {sira}: islem turu master data'da yok -> {islem}")
@@ -202,8 +267,11 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
 
     beklenen = BEKLENEN_ALANLAR.get(firma_key, {}).get(tur, [])
     standart = FIRMALAR.get(firma_key, {}).get('adapter') == 'standart_v1'
+    sohbet_kaydi = tur == "sohbet_kaydi"
     if standart:
         beklenen = ['Tarih','Proje','Cari_Tipi','Cari','Islem_Turu','Tutar','Hesap_Kasa','PB','Kur']
+    elif sohbet_kaydi and not beklenen:
+        beklenen = ['Tarih','Faaliyet','Proje','Cari_Tipi','Cari','Islem_Turu','Tutar','PB','Kur']
     if not beklenen:
         uyarilar.append(f"Firma/tur icin sema tanimli degil: {firma_key}/{tur}")
     normalize_edilen = []
@@ -242,7 +310,7 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
         for sira, kayit in enumerate(normalize_edilen, 1):
             uyarilar.extend(_master_data_kontrol(kayit, md, firma_key, sira))
 
-    if standart:
+    if standart or sohbet_kaydi:
         if md is None:
             hatalar.append('Faaliyet master verisi okunamadı; kayıt durduruldu.')
         for kayit in normalize_edilen:
@@ -259,12 +327,27 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
             else:
                 kayit['Kur'] = float(kur)
             if md:
-                for alan, liste in [('Faaliyet','faaliyetler'),('Proje','projeler'),
-                                     ('Hesap_Kasa','hesaplar'),('Islem_Turu','islem_turleri'),('Cari_Tipi','cari_tipler')]:
+                master_alanlari = [('Faaliyet','faaliyetler'),('Proje','projeler'),
+                                   ('Islem_Turu','islem_turleri'),('Cari_Tipi','cari_tipler')]
+                yeni_cari = sohbet_kaydi and bool(kayit.get('_yeni_cari'))
+                nakit_islemi = any(x in _norm(kayit.get('Islem_Turu')) for x in (
+                    'tahsilat', 'odemesi', 'banka masraf', 'kredi kullanimi',
+                    'cek teminatli borclanma', 'intercompany'
+                ))
+                if standart or nakit_islemi:
+                    master_alanlari.append(('Hesap_Kasa','hesaplar'))
+                for alan, liste in master_alanlari:
+                    if yeni_cari and alan == 'Cari_Tipi' and _norm(kayit.get(alan)) == 'diger':
+                        continue
                     if not _listede(kayit.get(alan), md[liste]):
                         hatalar.append(f'{alan} seçili faaliyetin tanımlarında bulunamadı.')
                 if not _listede(kayit.get('Cari'), md['cariler']):
-                    hatalar.append('Cari tanımsız; önce /yeni_cari ile ekleyin.')
+                    if yeni_cari:
+                        uyarilar.append(
+                            f"Yeni cari kullanıcı onayıyla tanımlara eklenecek -> {kayit.get('Cari')}"
+                        )
+                    else:
+                        hatalar.append('Cari tanımsız; önce cari tanımlarına ekleyin.')
                 elif not any(_norm(x['cari']) == _norm(kayit.get('Cari')) and
                              _norm(x['cari_tipi']) == _norm(kayit.get('Cari_Tipi'))
                              for x in md['cari_hiyerarsisi']):
@@ -273,6 +356,8 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
                 hatalar.append('Desteklenmeyen para birimi.')
             if kayit.get('Islem_Turu') == 'Kredi Taksit Ödemesi':
                 hatalar.append('Kredi taksiti için faiz/anapara planı entegrasyonu gerekli; bu akışta henüz desteklenmiyor.')
+    hatalar = list(dict.fromkeys(hatalar))
+    uyarilar = list(dict.fromkeys(uyarilar))
     skor = max(0, 100 - len(hatalar) * 40 - len(uyarilar) * 8)
     if hatalar:
         durum = FAIL

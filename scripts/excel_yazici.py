@@ -12,6 +12,11 @@ from openpyxl import load_workbook
 from config import FIRMALAR, TEMP_DIR, YEDEK_SAYISI
 from guvenlik import audit_yaz
 from kayit_kilidi import kilitli
+from master_data import (
+    GURSAR_SISTEM_HESAPLARI,
+    SISTEM_ISLEM_ETKILERI,
+    SISTEM_ISLEM_TURLERI,
+)
 
 log = logging.getLogger(__name__)
 
@@ -220,7 +225,14 @@ def yaz(firma_key, veri, belge_id, test_modu=False):
 
         master_wb = workbookler[hedef_key]
         master_firma = FIRMALAR[hedef_key]
-        if firma_key == "touche_holding":
+        # Sohbetten gelen standart kayıtlar, faaliyetinden bağımsız olarak tek
+        # master ledger şemasına yazılır. Böylece Gürsar gelir/hakedişleri eski
+        # yalnız-ödeme adaptöründe yanlışlıkla gider tahakkukuna dönüşmez.
+        if veri.get("_hedef") == "ana_ledger":
+            _yeni_cari_tanimlarini_yaz(master_wb, veri)
+            _sistem_tanimlarini_yaz(master_wb, veri)
+            sonuc = _yaz_touche_ledger(master_wb, master_firma, veri, belge_id)
+        elif firma_key == "touche_holding":
             sonuc = _yaz_touche(master_wb, master_firma, veri, belge_id)
         elif firma_key == "gursar_mimarlik":
             sonuc = _yaz_gursar_holding(master_wb, master_firma, veri, belge_id)
@@ -285,8 +297,18 @@ def yaz(firma_key, veri, belge_id, test_modu=False):
                 shutil.copy2(yedekler[key], Path(FIRMALAR[key]["excel"]))
             except Exception as geri_hata:
                 log.critical("Yedekten donulemedi (%s): %s", key, geri_hata)
-        audit_yaz("excel_yazma_hatasi", firma=firma_key, belge_id=belge_id, hata=str(e))
-        return {"basari": False, "yazilan": 0, "hata": str(e)}
+        teknik_hata = str(e)
+        if isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32):
+            kullanici_hatasi = (
+                "Ana Excel dosyası açık veya OneDrive tarafından kilitli. "
+                "Bilgisayardaki tüm Excel pencerelerini kapatın, OneDrive eşitlemesinin "
+                "tamamlanmasını bekleyin ve aynı taslakta Şifreyle Onayla'ya tekrar basın. "
+                "Kayıt yapılmadı; taslak korunuyor."
+            )
+        else:
+            kullanici_hatasi = teknik_hata
+        audit_yaz("excel_yazma_hatasi", firma=firma_key, belge_id=belge_id, hata=teknik_hata)
+        return {"basari": False, "yazilan": 0, "hata": kullanici_hatasi}
     finally:
         for wb in workbookler.values():
             try:
@@ -340,6 +362,139 @@ def _yaz_touche(wb, firma, veri, belge_id):
     return {"basari": True, "yazilan": yazilan, "hata": ""}
 
 
+def _yeni_cari_tanimlarini_yaz(wb, veri):
+    """Onaylanan sohbet taslagindaki acik yeni carileri master veriye ekler.
+
+    Ledger ve tanim ayni gecici workbook'a yazildigi icin islem atomiktir.
+    Modelin urettigi her ad degil, yalnizca ``_yeni_cari`` bayrakli ve kullanici
+    onayindan gecmis kayitlar burada ele alinir.
+    """
+    oneriler = [x for x in veri.get("kayitlar", []) if x.get("_yeni_cari")]
+    if not oneriler:
+        return 0
+    if "99_Ayarlar" not in wb.sheetnames:
+        raise ValueError("Yeni cari tanımı için 99_Ayarlar sayfası bulunamadı.")
+    ws = wb["99_Ayarlar"]
+
+    def norm(value):
+        import unicodedata
+        metin = unicodedata.normalize("NFKD", str(value or "").casefold().replace("ı", "i"))
+        return "".join(ch for ch in metin if not unicodedata.combining(ch)).strip()
+
+    mevcut = {norm(ws[f"AI{satir}"].value) for satir in range(13, 113) if ws[f"AI{satir}"].value}
+    eklendi = 0
+    for kayit in oneriler:
+        cari = str(kayit.get("Cari") or "").strip()
+        faaliyet = str(kayit.get("Faaliyet") or "").strip()
+        cari_tipi = str(kayit.get("Cari_Tipi") or "Diğer").strip()
+        if not cari or not faaliyet:
+            raise ValueError("Yeni cari tanımı için faaliyet ve cari adı gerekli.")
+        if norm(cari) in mevcut:
+            continue
+        bos = next((satir for satir in range(13, 113) if ws[f"AI{satir}"].value in (None, "")), None)
+        if bos is None:
+            raise ValueError("99_Ayarlar cari tanım alanı dolu; yeni cari eklenemedi.")
+        ws[f"AG{bos}"] = faaliyet
+        ws[f"AH{bos}"] = cari_tipi
+        ws[f"AI{bos}"] = cari
+        mevcut.add(norm(cari))
+        eklendi += 1
+    return eklendi
+
+
+def _sistem_tanimlarini_yaz(wb, veri):
+    """Onaylanan kaydın kontrollü işlem türü ve hesaplarını 99_Ayarlar'a ekler."""
+    if "99_Ayarlar" not in wb.sheetnames:
+        raise ValueError("Sistem tanımları için 99_Ayarlar sayfası bulunamadı.")
+    ws = wb["99_Ayarlar"]
+
+    def norm(value):
+        import unicodedata
+        metin = unicodedata.normalize("NFKD", str(value or "").casefold().replace("ı", "i"))
+        return "".join(ch for ch in metin if not unicodedata.combining(ch)).strip()
+
+    gerekli_turler = {
+        str(k.get("Islem_Turu") or "").strip() for k in veri.get("kayitlar", [])
+        if norm(k.get("Islem_Turu")) in {norm(x) for x in SISTEM_ISLEM_TURLERI}
+    }
+    mevcut_turler = {
+        norm(ws[f"T{satir}"].value): satir
+        for satir in range(6, 31) if ws[f"T{satir}"].value
+    }
+    for tur in gerekli_turler:
+        satir = mevcut_turler.get(norm(tur))
+        if satir is None:
+            satir = next(
+                (aday for aday in range(6, 31) if ws[f"T{aday}"].value in (None, "")),
+                None,
+            )
+            if satir is None:
+                raise ValueError("99_Ayarlar işlem türü alanı dolu; sistem tanımı eklenemedi.")
+            ws[f"T{satir}"] = tur
+            mevcut_turler[norm(tur)] = satir
+
+        etkiler = SISTEM_ISLEM_ETKILERI.get(tur)
+        if etkiler is None:
+            etkiler = next(
+                (deger for ad, deger in SISTEM_ISLEM_ETKILERI.items() if norm(ad) == norm(tur)),
+                None,
+            )
+        if etkiler is not None:
+            for sutun, deger in zip(("U", "V", "W", "X", "Y", "Z", "AA"), etkiler):
+                ws[f"{sutun}{satir}"] = deger
+
+    sistem_hesaplari = {norm(x) for x in GURSAR_SISTEM_HESAPLARI}
+    gerekli_hesaplar = [
+        k for k in veri.get("kayitlar", []) if norm(k.get("Hesap_Kasa")) in sistem_hesaplari
+    ]
+    mevcut_hesaplar = {
+        norm(ws[f"M{satir}"].value): satir
+        for satir in range(13, 63) if ws[f"M{satir}"].value
+    }
+    mevcut_hesap_idleri = {
+        str(ws[f"K{satir}"].value).strip()
+        for satir in range(13, 63) if ws[f"K{satir}"].value
+    }
+
+    def yeni_hesap_id():
+        sira = 1
+        while f"HSP-SYS-{sira:03d}" in mevcut_hesap_idleri:
+            sira += 1
+        hesap_id = f"HSP-SYS-{sira:03d}"
+        mevcut_hesap_idleri.add(hesap_id)
+        return hesap_id
+
+    for kayit in gerekli_hesaplar:
+        hesap = str(kayit.get("Hesap_Kasa") or "").strip()
+        satir = mevcut_hesaplar.get(norm(hesap))
+        if satir is None:
+            satir = next(
+                (aday for aday in range(13, 63) if ws[f"M{aday}"].value in (None, "")),
+                None,
+            )
+            if satir is None:
+                raise ValueError("99_Ayarlar hesap alanı dolu; sistem hesabı eklenemedi.")
+            ws[f"L{satir}"] = str(kayit.get("Faaliyet") or "")
+            ws[f"M{satir}"] = hesap
+            mevcut_hesaplar[norm(hesap)] = satir
+
+        # Önceki sürüm yalnız L/M sütunlarını dolduruyordu. Mevcut yarım
+        # tanımları da tamamla ki açılış bakiyesi ve kur formülleri çalışsın.
+        if ws[f"K{satir}"].value in (None, ""):
+            ws[f"K{satir}"] = yeni_hesap_id()
+        if ws[f"L{satir}"].value in (None, ""):
+            ws[f"L{satir}"] = str(kayit.get("Faaliyet") or "")
+        if ws[f"N{satir}"].value in (None, ""):
+            para_birimi = str(kayit.get("PB") or "").strip().upper()
+            if not para_birimi:
+                para_birimi = "USD" if "USD" in hesap.upper() else "EUR" if "EUR" in hesap.upper() else "TL"
+            ws[f"N{satir}"] = para_birimi
+        if ws[f"O{satir}"].value in (None, ""):
+            ws[f"O{satir}"] = 0
+        ws[f"P{satir}"] = f'=IF($K{satir}="","",IFERROR(VLOOKUP($N{satir},$AD$3:$AE$7,2,FALSE),0))'
+        ws[f"Q{satir}"] = f'=IF($K{satir}="","",$O{satir}*$P{satir})'
+
+
 def _yaz_touche_ledger(wb, firma, veri, belge_id):
     """Telegram'da acikca girilen ve onaylanan islemi holding ledger'ina yazar."""
     ledger = firma["ana_ledger"]
@@ -374,11 +529,11 @@ def _yaz_touche_ledger(wb, firma, veri, belge_id):
             "Kur": kayit.get("Kur") or 1,
             "Baglanti_ID": kayit.get("Baglanti_ID") or "",
             "Vade": kayit.get("Vade") or "",
-            "Durum": "Aktif",
+            "Durum": kayit.get("Durum") or "Aktif",
             "Belge_Referans": belge_id,
             "Aciklama": kayit.get("Aciklama") or "Telegram metin kaydi",
             "Kaynak_Belge_ID": kaynak_id,
-            "Kayit_Kaynak": "Telegram Metin / AI / Kullanici Onayli",
+            "Kayit_Kaynak": "CFO Asistanı / AI / Kullanıcı Onaylı",
             "AI_Guven": kayit.get("_guven", 0),
             "Onay_Durumu": "Onaylandı",
         }

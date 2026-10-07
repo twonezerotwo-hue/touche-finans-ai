@@ -158,6 +158,7 @@ class FaaliyetTestleri(unittest.TestCase):
         with patch('excel_yazici.os.replace',side_effect=failing):
             result = yaz(key,self.record(),'FAIL-1')
         self.assertFalse(result['basari'])
+        self.assertIn('tüm Excel pencerelerini kapatın', result['hata'])
         self.assertEqual(before,self.holding.read_bytes())
 
     def test_gursar_project_without_changing_revenue_schedule(self):

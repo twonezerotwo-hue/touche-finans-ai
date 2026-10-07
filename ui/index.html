@@ -11,19 +11,16 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="mark">TH</span><div><strong>Touche Finans</strong><small>Executive Intelligence</small></div></div>
-    <div class="header-actions"><span class="system-pill"><i></i> Yerel AI aktif</span><span id="headerDate" class="header-date"></span><button id="remoteButton" type="button" hidden>Telefon erişimi</button></div>
+    <div class="header-actions"><span class="system-pill"><i></i> AI aktif</span><span id="headerDate" class="header-date"></span><button id="excelButton" type="button">Excel Merkezi</button><button id="remoteButton" type="button" hidden>Telefon erişimi</button></div>
   </header>
 
   <main>
-    <section class="control-deck" aria-label="Analiz ayarları">
-      <div class="control-copy"><span>Yönetim görünümü</span><strong>Finans Komuta Merkezi</strong></div>
-      <div class="control-row">
-        <label>Faaliyet<select id="faaliyet"><option value="tum">Tüm holding</option></select></label>
-        <label>Risk yaklaşımı<select id="risk"><option value="dusuk">Düşük</option><option value="orta">Orta</option><option value="yuksek">Yüksek</option></select></label>
-        <label>Nakit rezervi<select id="rezerv"><option value="30">30 gün</option><option value="45">45 gün</option><option value="60">60 gün</option><option value="90">90 gün</option></select></label>
-        <label>Yatırım vadesi<select id="vade"><option value="3">0–3 ay</option><option value="12">3–12 ay</option><option value="36">1–3 yıl</option></select></label>
-      </div>
-    </section>
+    <div hidden aria-hidden="true">
+      <select id="faaliyet"><option value="tum">Tüm holding</option></select>
+      <select id="risk"><option value="orta" selected>Orta</option></select>
+      <select id="rezerv"><option value="30" selected>30 gün</option></select>
+      <select id="vade"><option value="12" selected>3–12 ay</option></select>
+    </div>
 
     <section class="decision-card" aria-live="polite">
       <div class="decision-copy"><div class="decision-label"><span class="pulse"></span> Bugünkü yönetim kararı</div><h1 id="anaKarar">Finansal görünüm hazırlanıyor</h1><p id="veriNotu"></p></div>
@@ -31,59 +28,60 @@
     </section>
 
     <section class="metrics" aria-label="Finans özeti">
-      <article><div class="metric-top"><span class="metric-icon cash">₺</span><span>Nakit ve banka</span></div><strong id="nakit">—</strong><small id="rezervNotu">Rezerv hesaplanıyor</small></article>
-      <article><div class="metric-top"><span class="metric-icon receive">↓</span><span>Açık alacak</span></div><strong id="alacak">—</strong><small id="tahsilatNotu">Tahsilat görünümü</small></article>
-      <article><div class="metric-top"><span class="metric-icon debt">↑</span><span>Toplam borç</span></div><strong id="borc">—</strong><small id="borcNotu">Finansal ve ticari</small></article>
-      <article><div class="metric-top"><span class="metric-icon result">◆</span><span>Net sonuç</span></div><strong id="net">—</strong><small>Gelir eksi gider</small></article>
+      <article class="metric-cash"><div class="metric-top"><span class="metric-icon cash">₺</span><span>Nakit ve banka</span></div><strong id="nakit">—</strong><small id="rezervNotu">Rezerv hesaplanıyor</small></article>
+      <article class="metric-due-in"><div class="metric-top"><span class="metric-icon receive">↓</span><span>Açık alacak</span></div><strong id="alacak">—</strong><small id="tahsilatNotu">Vadeli giriş · tahsilat</small></article>
+      <article class="metric-due-out"><div class="metric-top"><span class="metric-icon debt">↑</span><span>Toplam borç</span></div><strong id="borc">—</strong><small id="borcNotu">Vadeli çıkış · ödeme</small></article>
+      <article class="metric-result"><div class="metric-top"><span class="metric-icon result">◆</span><span>Net sonuç</span></div><strong id="net">—</strong><small>Gelir eksi gider</small></article>
     </section>
 
-    <section class="dashboard-layout">
-      <div class="dashboard-main">
-        <section class="executive-grid">
-          <article class="panel chart-panel"><div class="panel-title"><div><p class="eyebrow">Likidite radarı</p><h2>13 haftalık nakit projeksiyonu</h2></div><span class="panel-chip">Vadeli kayıtlara göre</span></div><div id="cashChart" class="cash-chart" role="img" aria-label="13 haftalık nakit projeksiyonu"></div><div id="cashChartLegend" class="chart-legend"></div></article>
-          <article class="panel health-panel"><div class="panel-title"><div><p class="eyebrow">Finansal sağlık</p><h2>Risk ve veri güveni</h2></div><span id="riskLevel" class="status">—</span></div><div class="health-score"><div><span>Likidite karşılama</span><strong id="liquidityCoverage">—</strong></div><div><span>Veri kalite skoru</span><strong id="dataQuality">—</strong></div></div><div class="quality-track"><span id="qualityBar"></span></div><p id="lastRecord" class="health-note">Son kayıt kontrol ediliyor.</p><div id="qualityIssues" class="mini-alerts"></div></article>
-        </section>
+    <div class="finance-legend" aria-label="Finans renkleri"><span class="legend-payment"><i></i>Gerçekleşen ödeme</span><span class="legend-income"><i></i>Kasa girişi</span><span class="legend-due-in"><i></i>Vadeli giriş</span><span class="legend-due-out"><i></i>Vadeli çıkış</span></div>
 
-        <article class="panel action-panel"><div class="panel-title"><div><p class="eyebrow">Aksiyon merkezi</p><h2>Şimdi ne yapılmalı?</h2></div><span id="actionCount" class="count">0 aksiyon</span></div><div id="actions" class="action-list"><p class="empty">Aksiyonlar hazırlanıyor.</p></div></article>
-        <article class="panel performance-panel"><div class="panel-title"><div><p class="eyebrow">Holding görünümü</p><h2>Faaliyet performansı</h2></div><span class="panel-chip">Konsolide defter</span></div><div id="activityPerformance" class="performance-table"><p class="empty">Faaliyetler analiz ediliyor.</p></div></article>
-
-        <article class="panel scenario-panel">
-          <div class="panel-title"><div><p class="eyebrow">Senaryo laboratuvarı</p><h2>Karardan önce etkisini gör</h2></div><span class="panel-chip">Para transferi yapmaz</span></div>
-          <form id="scenarioForm" class="scenario-form"><label>Beklenen ek tahsilat<span><input id="scenarioCollection" type="number" min="0" step="1000" value="0"> TL</span></label><label>Planlanan ek ödeme<span><input id="scenarioPayment" type="number" min="0" step="1000" value="0"> TL</span></label><label>Yeni yatırım tutarı<span><input id="scenarioInvestment" type="number" min="0" step="1000" value="0"> TL</span></label><button id="scenarioRun" type="submit">Senaryoyu hesapla</button></form>
-          <div id="scenarioResult" class="scenario-result"><span>Değerleri girerek nakit, rezerv ve finansman etkisini anında hesaplayın.</span></div>
-        </article>
-
-        <section class="split-grid">
-          <article class="panel"><div class="panel-title"><div><p class="eyebrow">Ödeme planı</p><h2>Öncelikli ödemeler</h2></div><span id="odemeSayisi" class="count">0 kayıt</span></div><div id="odemeler" class="payment-list"><p class="empty">Kayıtlar yükleniyor.</p></div></article>
-          <article class="panel"><div class="panel-title"><div><p class="eyebrow">Nakit akışı</p><h2>Son hareketler</h2></div><span id="hareketSayisi" class="count">0 kayıt</span></div><div id="sonHareketler" class="payment-list"><p class="empty">Kayıtlar yükleniyor.</p></div></article>
-        </section>
-
-        <article class="panel project-panel"><div class="panel-title"><div><p class="eyebrow">Proje kontrolü</p><h2>Hakediş ve maliyet iş kalemleri</h2></div><span id="kalemSayisi" class="count">0 kayıt</span></div><div id="projeOzeti" class="project-summary"></div><div id="projeKalemleri" class="project-list"><p class="empty">İş kalemleri yükleniyor.</p></div><p class="panel-note">Düzenlemeler tek ana Excel'e, bağlı hakediş/gider fişlerine ve finans ekranına birlikte işlenir.</p></article>
-
-        <article class="panel upload-panel">
-          <div class="panel-title"><div><p class="eyebrow">Belge merkezi</p><h2>Belge yükle ve yapay zekâya okut</h2></div><span class="count">Onaydan önce yazılmaz</span></div>
-          <form id="uploadForm" class="upload-form"><label id="dropZone" class="drop-zone" for="dosya"><strong>Fatura, dekont veya belge seçin</strong><span>PDF, JPG, PNG, WEBP veya BMP · en fazla 20 MB</span><input id="dosya" name="dosya" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp" required></label><label class="upload-company">İşlenecek faaliyet<select id="uploadFirma" name="firma"><option value="">Yapay zekâ otomatik bulsun</option></select></label><button id="uploadButton" type="submit">Belgeyi incele</button></form>
-          <p id="uploadStatus" class="upload-status" aria-live="polite"></p><div id="belgeler" class="document-list"></div>
-        </article>
-
-        <article class="panel cash-plan-panel"><div class="panel-title"><div><p class="eyebrow">Nakit planı</p><h2>Rezerv ve finansman</h2></div></div><div class="cash-grid"><div><span>İşletme rezervi</span><strong id="rezervTutar">—</strong></div><div><span>30 gün tahsilat</span><strong id="tahsilat">—</strong></div><div><span>30 gün ödeme</span><strong id="vadeliOdeme">—</strong></div><div><span>Finansman açığı</span><strong id="acik">—</strong></div></div><div id="uyarilar" class="warnings"></div></article>
-      </div>
-
-      <aside class="assistant-panel">
-        <div class="assistant-head"><div class="ai-mark"><span>AI</span></div><div><h2>Yerel CFO Asistanı</h2><p id="aiStatus"><i></i> Defter kanıtlarıyla hazır</p></div><span id="aiConfidence" class="ai-confidence">—</span></div>
-        <div class="assistant-context"><span>Aktif bağlam</span><strong id="assistantContext">Tüm holding</strong></div>
-        <div id="chat" class="chat" aria-live="polite"><div class="message assistant">Nakit, ödeme, tahsilat, risk, kârlılık veya yatırım kapasitesi hakkında sorun. Yanıtları kayıtlı verilerle kanıtlayacağım.</div></div>
+    <section class="dashboard-layout dashboard-simple">
+      <section class="assistant-panel assistant-primary">
+        <div class="assistant-head"><div class="ai-mark"><span>AI</span></div><div><h2>CFO Asistanı</h2><p id="aiStatus"><i></i> Defter kanıtlarıyla hazır</p></div><span id="aiConfidence" class="ai-confidence" hidden>—</span></div>
+        <strong id="assistantContext" hidden>Tüm holding</strong>
+        <div id="chat" class="chat" aria-live="polite"><div class="message assistant">Bana doğal şekilde sorun. Örneğin “Gürsar'ın eylül ayında yaptığı ödemeleri kalem kalem göster” veya “Bu ay ilk ne ödenmeli?” diyebilirsiniz.</div></div>
         <div id="aiEvidence" class="ai-evidence" hidden></div>
-        <div class="quick-questions"><button type="button" data-question="Bugün hangi 3 aksiyonu almalıyım?">Bugünkü aksiyonlar</button><button type="button" data-question="13 haftalık nakit riskim nedir?">Nakit riski</button><button type="button" data-question="Faaliyetlerin kârlılığını karşılaştır">Kârlılık</button><button type="button" data-question="Eksik veya güvensiz finans verileri neler?">Veri kalitesi</button></div>
-        <form id="chatForm"><label class="sr-only" for="soru">Finans sorunuzu yazın</label><textarea id="soru" rows="3" maxlength="1500" placeholder="Örn. Önümüzdeki 30 günde likiditeyi nasıl korurum?"></textarea><button id="gonder" type="submit">Gönder</button></form>
+        <div class="quick-questions"><button type="button" data-question="Bugün ilk hangi ödemeleri yapmalıyım?">Ödeme önceliği</button><button type="button" data-question="Gürsar Mimarlık için bu ay yapılan ödemeleri kalem kalem göster">Gürsar ödemeleri</button><button type="button" data-question="Önümüzdeki 30 günlük nakit riskini açıkla">Nakit riski</button><button type="button" data-question="Faaliyetlerin kârlılığını karşılaştır">Kârlılık</button></div>
+        <form id="chatForm"><label class="sr-only" for="soru">Finans sorunuzu yazın</label><textarea id="soru" rows="3" maxlength="1500" placeholder="Finans sorunuzu doğal şekilde yazın…"></textarea><button id="gonder" type="submit">Gönder</button></form>
         <p class="disclaimer">Karar destek sistemidir; ödeme yapmaz ve kesin yatırım getirisi vaat etmez.</p>
-      </aside>
+      </section>
+
+      <div class="summary-rail">
+        <article class="panel compact-panel"><div class="panel-title"><div><p class="eyebrow">Sıradaki</p><h2>Öncelikli ödemeler</h2></div><span id="odemeSayisi" class="count">0 kayıt</span></div><div id="odemeler" class="payment-list"><p class="empty">Kayıtlar yükleniyor.</p></div></article>
+        <article class="panel compact-panel"><div class="panel-title"><div><p class="eyebrow">Son kayıtlar</p><h2>Nakit hareketleri</h2></div><span id="hareketSayisi" class="count">0 kayıt</span></div><div id="sonHareketler" class="payment-list"><p class="empty">Kayıtlar yükleniyor.</p></div></article>
+      </div>
     </section>
+
+    <article class="panel upload-panel clean-upload">
+      <div class="panel-title"><div><p class="eyebrow">Belge merkezi</p><h2>Belgeyi yükle, yapay zekâ incelesin</h2></div><span class="count">Onaydan önce yazılmaz</span></div>
+      <form id="uploadForm" class="upload-form"><label id="dropZone" class="drop-zone" for="dosya"><strong>Fatura, dekont veya belge seçin</strong><span>PDF, JPG, PNG, WEBP veya BMP · en fazla 20 MB</span><input id="dosya" name="dosya" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp" required></label><label class="upload-company">Faaliyet<select id="uploadFirma" name="firma"><option value="">Yapay zekâ otomatik bulsun</option></select></label><button id="uploadButton" type="submit">İncele</button></form>
+      <p id="uploadStatus" class="upload-status" aria-live="polite"></p><div id="belgeler" class="document-list"></div>
+    </article>
+
+    <details class="management-tools">
+      <summary>İleri yönetim araçları</summary>
+      <div class="management-body">
+        <div class="management-actions"><button id="transferButton" type="button">Grup içi transfer</button><button id="fxButton" type="button">Kur değerleme</button><button id="periodButton" type="button">Dönem kontrolü</button><button id="governanceButton" type="button">Yönetim ayarları</button></div>
+        <article class="panel scenario-panel">
+          <div class="panel-title"><div><p class="eyebrow">Senaryo</p><h2>Karardan önce etkisini gör</h2></div><span class="panel-chip">Para transferi yapmaz</span></div>
+          <form id="scenarioForm" class="scenario-form"><label>Beklenen ek tahsilat<span><input id="scenarioCollection" type="number" min="0" step="1000" value="0"> TL</span></label><label>Planlanan ek ödeme<span><input id="scenarioPayment" type="number" min="0" step="1000" value="0"> TL</span></label><label>Yeni yatırım tutarı<span><input id="scenarioInvestment" type="number" min="0" step="1000" value="0"> TL</span></label><button id="scenarioRun" type="submit">Hesapla</button></form>
+          <div id="scenarioResult" class="scenario-result"><span>Tahsilat, ödeme veya yatırım senaryosunun etkisini hesaplayın.</span></div>
+        </article>
+        <article class="panel project-panel"><div class="panel-title"><div><p class="eyebrow">Proje kayıtları</p><h2>Hakediş ve maliyet iş kalemleri</h2></div><span id="kalemSayisi" class="count">0 kayıt</span></div><div id="projeOzeti" class="project-summary"></div><div id="projeKalemleri" class="project-list"><p class="empty">İş kalemleri yükleniyor.</p></div></article>
+      </div>
+    </details>
   </main>
 
   <div id="pairOverlay" class="overlay" hidden><form id="pairForm" class="pair-card"><div class="ai-mark"><span>TH</span></div><h2>Telefonu yetkilendir</h2><p>Ana bilgisayarda oluşturulan 8 haneli eşleştirme kodunu girin.</p><label for="pairCode">Eşleştirme kodu</label><input id="pairCode" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="one-time-code" required><button type="submit">Yetkilendir</button><p id="pairError" class="form-error"></p></form></div>
+  <dialog id="excelDialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Tek ana dosya</p><h2>Excel Merkezi</h2><p class="dialog-meta">Finansal kayıtların ana kaynağı. Telefon üzerinden indirebilir, ana bilgisayarda doğrudan açabilirsiniz.</p><div class="excel-file"><span>Master Excel</span><strong id="excelFileName">Yükleniyor…</strong><small id="excelFilePath"></small></div><div class="excel-actions"><a id="excelDownload" href="/api/excel/indir">Excel’i indir</a><button id="excelOpen" type="button" hidden>Bilgisayarda aç</button></div><p class="excel-warning">Manuel hücre değişiklikleri merkez finans defteriyle eşleşmeyebilir. Finans kayıtlarını mümkün olduğunca CFO Asistanı üzerinden oluşturun.</p><p id="excelStatus" class="dialog-result"></p></dialog>
   <dialog id="remoteDialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Özel ağ erişimi</p><h2>Yetkili telefonu bağla</h2><p>Telefonda Tailscale ile özel ağa katıldıktan sonra aşağıdaki tek kullanımlık kodu telefondaki ekrana girin.</p><button id="generateCode" type="button">10 dakikalık kod oluştur</button><div id="remoteCode" class="remote-code">Kod oluşturulmadı</div><h3>Yetkili kullanıcılar</h3><div id="remoteUsers" class="remote-users"><span>Henüz kullanıcı yok.</span></div></dialog>
   <dialog id="projectDialog" class="project-dialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Tek ana Excel</p><h2 id="projectDialogTitle">İş kalemini düzenle</h2><p id="projectDialogMeta" class="dialog-meta"></p><form id="projectForm" class="project-form"><input id="projectId" type="hidden"><label>Onaylı metraj<input id="projectQuantity" type="number" min="0" step="0.001" required></label><label>Satış birim fiyatı (TL)<input id="projectSalesPrice" type="number" min="0" step="0.01" required></label><label>Maliyet türü<select id="projectCostType"><option>Birim fiyat</option><option>Toplam sabit</option></select></label><label>Usta BF / sabit tutar (TL)<input id="projectCostPrice" type="number" min="0" step="0.01" required></label><label>Durum<select id="projectStatus"><option>Onaylı</option><option>Taslak</option><option>İptal</option></select></label><label class="wide">Kaynak / not<textarea id="projectNote" rows="3" maxlength="500"></textarea></label><p id="projectError" class="form-error wide"></p><button id="projectSave" class="wide" type="submit">Excel ve finans defterini güncelle</button></form></dialog>
+  <dialog id="transferDialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Otomatik çift kayıt</p><h2>Grup içi para transferi</h2><p class="dialog-meta">Kaynak ve hedef faaliyet fişleri birlikte oluşur; konsolidasyonda grup içi bakiyeler otomatik elimine edilir.</p><form id="transferForm" class="project-form"><label>Kaynak faaliyet<select id="transferSource" required></select></label><label>Hedef faaliyet<select id="transferTarget" required></select></label><label>Tarih<input id="transferDate" type="date" required></label><label>Tutar (TL)<input id="transferAmount" type="number" min="0.01" step="0.01" required></label><label class="wide">Açıklama<input id="transferDescription" maxlength="250" required></label><p id="transferError" class="form-error wide"></p><button class="wide" type="submit">Çift taraflı kaydı oluştur</button></form></dialog>
+  <dialog id="fxDialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Dönem sonu</p><h2>Döviz kuru ve değerleme</h2><form id="fxForm" class="project-form"><label>Değerleme tarihi<input id="fxDate" type="date" required></label><label>Para birimi<select id="fxCurrency"><option>EUR</option><option>USD</option><option>GBP</option></select></label><label>1 birim döviz / TL<input id="fxRate" type="number" min="0.000001" step="0.000001" required></label><label>Kaynak<input id="fxSource" value="Manuel yönetim kuru" maxlength="100"></label><p id="fxError" class="form-error wide"></p><div class="dialog-actions wide"><button id="fxSave" type="submit">Kuru kaydet</button><button id="fxRevalue" type="button">Tüm döviz bakiyelerini değerle</button></div></form><div id="fxResult" class="dialog-result"></div></dialog>
+  <dialog id="periodDialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Kapanış kontrol listesi</p><h2>Dönem kapanış hazırlığı</h2><form id="periodForm" class="project-form"><label>Yıl<input id="periodYear" type="number" min="2000" max="2200" required></label><label>Ay<input id="periodMonth" type="number" min="1" max="12" required></label><button class="wide" type="submit">Kapanış kontrollerini çalıştır</button></form><div id="periodResult" class="dialog-result"></div></dialog>
+  <dialog id="governanceDialog" class="governance-dialog"><button class="dialog-close" type="button" aria-label="Kapat">×</button><p class="eyebrow">Yetki ve veri yönetişimi</p><h2>Kurumsal finans ayarları</h2><div class="governance-grid"><section><h3>Excel onayı</h3><p class="dialog-meta">İkili onay devre dışı. Excel’i değiştiren işlemler tek onay şifresiyle tamamlanır.</p><form id="approvalRuleForm" class="mini-form" hidden><input id="approvalRuleId" placeholder="Kural kodu"><select id="approvalActivity"><option value="*">Tüm faaliyetler</option></select><input id="approvalMin" type="number"><input id="approvalMax" type="number"><input id="approvalCount" type="number" value="1"><input id="approvalRoles" value="ONAYCI"><label><input id="approvalSeparation" type="checkbox"> Ayrı hazırlayan</label><button type="submit">Kuralı kaydet</button></form><div id="approvalRules" class="settings-list" hidden></div></section><section><h3>Hesap eşlemeleri</h3><form id="mappingForm" class="mini-form"><select id="mappingActivity" required></select><input id="mappingLocal" placeholder="Yerel hesap kodu" required><input id="mappingGroup" placeholder="Grup hesap kodu" required><button type="submit">Eşlemeyi kaydet</button></form><div id="accountMappings" class="settings-list"></div></section><section class="wide"><h3>Bekleyen banka mutabakatı</h3><div id="bankReconciliation" class="settings-list"></div></section></div></dialog>
+  <dialog id="approvalPasswordDialog" class="approval-password-dialog"><form id="approvalPasswordForm"><p class="eyebrow">Güvenli Excel değişikliği</p><h2>Onay şifresini girin</h2><p class="dialog-meta">Doğru şifre girildiğinde taslak master Excel’e ve merkez finans defterine tek seferde yazılır.</p><label for="approvalPassword">Onay şifresi</label><input id="approvalPassword" type="password" inputmode="numeric" autocomplete="current-password" required><p id="approvalPasswordError" class="form-error"></p><div class="dialog-actions"><button id="approvalPasswordCancel" type="button">Vazgeç</button><button type="submit">Onayla ve Excel’e yaz</button></div></form></dialog>
   <script src="/app.js" defer></script>
 </body>
 </html>
