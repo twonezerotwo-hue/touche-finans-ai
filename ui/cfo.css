@@ -72,6 +72,7 @@
 .cfo-badge.healthy { background: #e7f3ec; color: #0f5132; border-color: #b9dcc7; }
 .cfo-badge.warning { background: #fbf3dc; color: #7a5b06; border-color: #ecd9a0; }
 .cfo-badge.danger { background: #fbe9e9; color: #8f2020; border-color: #eec2c2; }
+.cfo-badge.na { background: #eef1f0; color: #5c7268; border-color: #d9e4dc; }
 .cfo-badge.info { background: #e9f1f6; color: #1f4d66; border-color: #bcd6e4; }
 .cfo-badge::before { content: "●"; font-size: 10px; }
 

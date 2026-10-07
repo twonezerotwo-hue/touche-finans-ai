@@ -11,7 +11,9 @@
     return "\u20ba" + Number(tutar || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
   }
   function fmtPct(v) {
-    const n = Number(v || 0);
+    if (v === null || v === undefined || v === "") return "\u2014";
+    const n = Number(v);
+    if (!isFinite(n)) return "\u2014";
     return "%" + n.toFixed(1).replace(".", ",");
   }
   function el(tag, attrs, children) {

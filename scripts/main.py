@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import GELEN_EVRAK, ARSIV, ARSIV_HATA, LOGLAR, FIRMALAR
+from config import ARSIV, ARSIV_HATA, LOGLAR, FIRMALAR
 from firma_taniyici import tani as firma_tani
 from belge_turleri import turleri_getir, tur_bilgisi
 from ollama_client import modele_sor, metne_sor, son_metin_saglayici

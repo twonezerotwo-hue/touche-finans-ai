@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -224,6 +225,8 @@ class Phase1Testleri(unittest.TestCase):
         self.assertEqual(_duzeltme_parse("Tutar=1250,50\nCari=Yeni Cari")["Cari"], "Yeni Cari")
 
     def test_pdf_gorsele_cevrilir(self):
+        if shutil.which("pdftoppm") is None:
+            self.skipTest("pdftoppm (poppler) bulunamadi; PDF donusumu opsiyonel ortam bagimliligi.")
         pdf = Path(self.temp.name) / "dekont.pdf"
         Image.new("RGB", (800, 1100), "white").save(pdf, "PDF")
         model_yolu, geciciler = model_gorseli_hazirla(pdf)

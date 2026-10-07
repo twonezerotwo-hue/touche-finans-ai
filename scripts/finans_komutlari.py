@@ -168,7 +168,7 @@ def acik_borc_vadesi_guncelle(hedefler, yeni_vade, aktor="cfo_asistani"):
         vade_sutunu = FIRMALAR["touche_holding"]["ana_ledger"]["sutunlar"]["Vade"]
         for satirlar in excel_satirlari.values():
             for satir in satirlar:
-                hucre = wb[f"03_Kayıt Merkezi"][f"{vade_sutunu}{satir}"]
+                hucre = wb["03_Kayıt Merkezi"][f"{vade_sutunu}{satir}"]
                 hucre.value = datetime.combine(yeni_vade, datetime.min.time())
                 # Master dosyadaki diğer tarih hücreleriyle aynı Excel biçimi.
                 hucre.number_format = r"dd\.mm\.yyyy"

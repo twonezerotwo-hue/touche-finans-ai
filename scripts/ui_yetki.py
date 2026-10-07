@@ -14,8 +14,47 @@ from pathlib import Path
 from config import VERI_DIR
 
 YETKI_DOSYASI = Path(VERI_DIR) / "ui_yetkililer.json"
+ROLLER_DOSYASI = Path(VERI_DIR) / "ui_roller.json"
+ROL_LISTESI = ["OWNER", "CFO", "FINANCE_MANAGER", "ACCOUNTANT", "PROJECT_MANAGER", "VIEWER"]
 _LOCK = threading.RLock()
 _ESLESTIRME = {"hash": "", "son": None}
+
+
+def _roller_yukle():
+    try:
+        veri = json.loads(ROLLER_DOSYASI.read_text(encoding="utf-8"))
+        return {str(k).strip().casefold(): v for k, v in (veri.get("kullanicilar") or {}).items()}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _roller_kaydet(veri):
+    ROLLER_DOSYASI.parent.mkdir(parents=True, exist_ok=True)
+    gecici = ROLLER_DOSYASI.with_suffix(".tmp")
+    gecici.write_text(json.dumps({"surum": 1, "kullanicilar": veri}, ensure_ascii=False, indent=2),
+                      encoding="utf-8")
+    os.replace(gecici, ROLLER_DOSYASI)
+
+
+def rol_ata(kimlik, rol, faaliyetler=None, projeler=None):
+    """Kullaniciya rol ve faaliyet/proje kapsami atar (server-side yetkilendirme)."""
+    kimlik = str(kimlik or "").strip().casefold()
+    if not kimlik:
+        raise ValueError("Kullanıcı kimliği gerekli.")
+    rol = str(rol or "VIEWER").strip().upper()
+    if rol not in ROL_LISTESI:
+        raise ValueError(f"Geçersiz rol: {rol}")
+    kapsam = {"rol": rol,
+              "faaliyetler": [str(x) for x in (faaliyetler or ["*"])],
+              "projeler": [str(x) for x in (projeler or ["*"])]}
+    veri = _roller_yukle()
+    veri[kimlik] = kapsam
+    _roller_kaydet(veri)
+    return {"kimlik": kimlik, **kapsam}
+
+
+def roller_ozeti():
+    return [{"kimlik": k, **v} for k, v in sorted(_roller_yukle().items())]
 
 
 def _yukle():
@@ -43,14 +82,20 @@ def oturum(headers, host, client_ip):
     ts_ad = str(headers.get("Tailscale-User-Name") or ts_kullanici).strip()
     yerel = client_ip in {"127.0.0.1", "::1"} and host_adi in {"127.0.0.1", "localhost", "::1"}
     if yerel:
-        return {"yetkili": True, "yerel": True, "kimlik": "local-admin", "ad": "Yerel yönetici", "eslestirme_gerekli": False}
+        return {"yetkili": True, "yerel": True, "kimlik": "local-admin", "ad": "Yerel yönetici",
+                "eslestirme_gerekli": False, "rol": "OWNER", "faaliyetler": ["*"], "projeler": ["*"]}
     if ts_kullanici:
         yetkili = ts_kullanici in _yukle()
+        kapsam = _roller_yukle().get(ts_kullanici) or {}
+        rol = kapsam.get("rol", "FINANCE_MANAGER") if yetkili else "VIEWER"
         return {
             "yetkili": yetkili, "yerel": False, "kimlik": ts_kullanici, "ad": ts_ad,
-            "eslestirme_gerekli": not yetkili,
+            "eslestirme_gerekli": not yetkili, "rol": rol,
+            "faaliyetler": kapsam.get("faaliyetler", ["*"]),
+            "projeler": kapsam.get("projeler", ["*"]),
         }
-    return {"yetkili": False, "yerel": False, "kimlik": "", "ad": "", "eslestirme_gerekli": True}
+    return {"yetkili": False, "yerel": False, "kimlik": "", "ad": "", "eslestirme_gerekli": True,
+            "rol": "VIEWER", "faaliyetler": [], "projeler": []}
 
 
 def kod_uret():

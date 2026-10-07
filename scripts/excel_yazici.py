@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from openpyxl import load_workbook
 
-from config import FIRMALAR, TEMP_DIR, YEDEK_SAYISI
+from config import FIRMALAR, YEDEK_SAYISI
 from guvenlik import audit_yaz
 from kayit_kilidi import kilitli
 from master_data import (

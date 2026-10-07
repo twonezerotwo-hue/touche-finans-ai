@@ -77,12 +77,13 @@ def soru_cevapla(soru: str, faaliyet=None) -> dict:
             f"({_tl(n['min_kapanis_kurus'])}) gerçekleşiyor; eşik {_tl(n['esik_kurus'])}. Durum: {durum}.",
             baglam, oneri="Riskli ise en büyük alacakların tahsilatını öne çekin." if n["risk"] else None)
     if any(k in s for k in ["marj", "en dusuk", "en düşük", "karlilik", "kârlılık"]):
-        if not baglam["projeler"]:
+        marjli = [p for p in baglam["projeler"] if p["brut_marj_yuzde"] is not None]
+        if not marjli:
             return _cevap(VERI_YOK, baglam)
-        en_dusuk = min(baglam["projeler"], key=lambda x: x["brut_marj_yuzde"])
+        en_dusuk = min(marjli, key=lambda x: x["brut_marj_yuzde"])
         return _cevap(
             f"En düşük brüt marj {en_dusuk['ad']} ({en_dusuk['brut_marj_metin']}).",
-            baglam, kanitlar=[f"{p['ad']}: {p['brut_marj_metin']}" for p in baglam["projeler"][:5]])
+            baglam, kanitlar=[f"{p['ad']}: {p['brut_marj_metin']}" for p in marjli[:5]])
     if any(k in s for k in ["alacak", "tahsilat", "problemli", "gecikmis"]):
         a = baglam["alacak"]
         if not a["kalemler"]:
@@ -136,12 +137,15 @@ def insights_uret(faaliyet=None, hedef_marj: float = 15.0) -> list[dict]:
                       "status": "OPEN",
                       "oneri": "En büyük alacakların tahsilatını öne çekin, yatırımı erteleyin."})
     for p in baglam["projeler"]:
-        if p["brut_marj_yuzde"] < 0:
+        marj = p["brut_marj_yuzde"]
+        if marj is None:
+            continue
+        if marj < 0:
             sonuc.append({"type": "NEGATIVE_MARGIN", "severity": "CRITICAL",
                           "title": f"{p['ad']} zararda", "description": f"Brüt marj {p['brut_marj_metin']}.",
                           "entity": p["ad"], "metric": "brut_marj", "detectedAt": tespit, "status": "OPEN",
                           "oneri": "Maliyet ve fiyat revizyonu değerlendirin."})
-        elif p["brut_marj_yuzde"] < hedef_marj:
+        elif marj < hedef_marj:
             sonuc.append({"type": "LOW_MARGIN", "severity": "WARNING",
                           "title": f"{p['ad']} marjı hedef altında",
                           "description": f"Brüt marj {p['brut_marj_metin']} (hedef %{hedef_marj}).",

@@ -122,7 +122,7 @@ def sema_guncelle() -> None:
         con.executescript(EK_INDEKSLER)
 
 
-_HAZIRLANAN = set()
+_HAZIRLANAN: set[str] = set()
 
 
 def veritabani_hazirla() -> None:

@@ -69,7 +69,9 @@ def tl_metin(deger, *, kusuratsiz: bool = True, pb: str = "TL") -> str:
 
 
 def yuzde_metin(deger, basamak: int = 1) -> str:
-    """Orani Turkce bicimde dondurur: 24.5 -> '%24,5'."""
+    """Orani Turkce bicimde dondurur: 24.5 -> '%24,5'. Deger yoksa (None) tire."""
+    if deger is None:
+        return "\u2014"
     d = _decimal(deger)
     isaret = "-" if d < 0 else ""
     d = abs(d)

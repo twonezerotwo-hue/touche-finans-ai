@@ -324,9 +324,19 @@ def fis_taslaklari(hazir):
     with _baglanti() as con:
         for sira, kayit in enumerate(hazir.get("veri", {}).get("kayitlar", []), 1):
             pb = str(kayit.get("PB") or "TL").upper()
-            kur = _decimal(kayit.get("Kur") or 1)
+            try:
+                kur = _decimal(kayit.get("Kur"))
+            except ValueError:
+                kur = Decimal("0")
+            if pb != "TL" and kur <= 0:
+                raise ValueError(
+                    f"{pb} tutarindaki kayit icin gecerli kur (Kur) gerekli; "
+                    "eksik kur 1.0 varsayilamaz."
+                )
+            if pb == "TL":
+                kur = Decimal("1")
             tutar_doviz = _decimal(kayit.get("Tutar") or kayit.get("Toplam"))
-            tutar = _kurus(tutar_doviz * (kur if pb != "TL" else Decimal("1")))
+            tutar = _kurus(tutar_doviz * kur)
             if tutar <= 0:
                 continue
             gun = _tarih(kayit.get("Tarih") or kayit.get("Vade_Tarihi") or date.today())
@@ -554,28 +564,14 @@ def butce_kaydet(faaliyet, proje, hesap, yil, ay, tutar, aktor):
 
 
 def yonetim_ozeti(faaliyet=None, yil=None, ay=None):
-    veritabanini_hazirla()
-    where, args = ["1=1"], []
-    if faaliyet:
-        where.append("f.faaliyet_key=?"); args.append(faaliyet)
-    if yil:
-        where.append("substr(f.tarih,1,4)=?"); args.append(f"{int(yil):04d}")
-    if ay:
-        where.append("substr(f.tarih,6,2)=?"); args.append(f"{int(ay):02d}")
-    kosul = " AND ".join(where)
-    with _baglanti() as con:
-        rows = con.execute(
-            f"SELECT s.hesap_kodu, h.hesap_tipi, SUM(s.borc_kurus) borc, SUM(s.alacak_kurus) alacak "
-            f"FROM fisler f JOIN fis_satirlari s ON s.fis_id=f.fis_id JOIN hesaplar h ON h.kod=s.hesap_kodu "
-            f"WHERE {kosul} GROUP BY s.hesap_kodu,h.hesap_tipi", args,
-        ).fetchall()
-    gelir = sum(r["alacak"] - r["borc"] for r in rows if r["hesap_tipi"] == "GELIR")
-    gider = sum(r["borc"] - r["alacak"] for r in rows if r["hesap_tipi"] == "GIDER")
-    nakit = sum(r["borc"] - r["alacak"] for r in rows if r["hesap_kodu"] in ("100", "102"))
-    alacak = sum(r["borc"] - r["alacak"] for r in rows if r["hesap_kodu"] in ("120", "131"))
-    borc = sum(r["alacak"] - r["borc"] for r in rows if r["hesap_kodu"] in ("300", "320", "331", "335", "336"))
-    return {"gelir": gelir/100, "gider": gider/100, "net": (gelir-gider)/100,
-            "nakit": nakit/100, "alacak": alacak/100, "borc": borc/100}
+    """Geriye donuk uyumluluk sarmalayicisi: tek finans motoruna delege eder."""
+    from finans_motoru import bakiye_ozeti
+
+    o = bakiye_ozeti(faaliyet, None, yil, ay)
+    return {"gelir": o["ciro_kurus"] / 100, "gider": o["maliyet_kurus"] / 100,
+            "net": (o["ciro_kurus"] - o["maliyet_kurus"]) / 100,
+            "nakit": o["nakit_kurus"] / 100, "alacak": o["alacak_kurus"] / 100,
+            "borc": o["borc_kurus"] / 100}
 
 
 def mizan(baslangic, bitis, faaliyet=None):

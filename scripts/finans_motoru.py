@@ -39,16 +39,35 @@ def _kimlik_filtre(faaliyet=None, proje=None) -> tuple[list[str], list]:
     return where, args
 
 
-def bakiye_ozeti(faaliyet=None, proje=None) -> dict:
-    """Nakit, alacak, borc, ciro ve maliyet bakiyelerini kuruş olarak toplar."""
+def bakiye_ozeti(faaliyet=None, proje=None, yil=None, ay=None) -> dict:
+    """Nakit, alacak, borc, ciro ve maliyet bakiyelerini kuruş olarak toplar.
+
+    Konsolidasyon (tum/holding) seviyesinde grup ici (intercompany) 131/331
+    bakiyeleri ELIMINE edilir; boylece transfer toplamlari sismez.
+    """
     veritabani_hazirla()
     where, args = _kimlik_filtre(faaliyet, proje)
+    if yil:
+        where.append("substr(f.tarih,1,4)=?")
+        args.append(f"{int(yil):04d}")
+    if ay:
+        where.append("substr(f.tarih,6,2)=?")
+        args.append(f"{int(ay):02d}")
     kosul = (" AND " + " AND ".join(where)) if where else ""
+    konsolide = faaliyet in (None, "", "tum", "touche_holding")
+    # Yalnizca grup ici fislerin 131/331 satirlarini ele (nakit satirlari netlesir)
+    ic_haric = ""
+    if konsolide:
+        ic_haric = (
+            " AND NOT (s.hesap_kodu IN ('131','331') AND s.fis_id IN ("
+            "SELECT kaynak_fis_id FROM sirketler_arasi_islemler "
+            "UNION SELECT hedef_fis_id FROM sirketler_arasi_islemler))"
+        )
     with baglanti() as con:
         rows = con.execute(
             "SELECT s.hesap_kodu, h.hesap_tipi, SUM(s.borc_kurus) b, SUM(s.alacak_kurus) a "
             "FROM fisler f JOIN fis_satirlari s ON s.fis_id=f.fis_id "
-            "JOIN hesaplar h ON h.kod=s.hesap_kodu WHERE 1=1" + kosul +
+            "JOIN hesaplar h ON h.kod=s.hesap_kodu WHERE 1=1" + kosul + ic_haric +
             " GROUP BY s.hesap_kodu, h.hesap_tipi",
             args,
         ).fetchall()
@@ -67,7 +86,7 @@ def bakiye_ozeti(faaliyet=None, proje=None) -> dict:
             gider += net_b
     return {"nakit_kurus": nakit, "alacak_kurus": alacak, "borc_kurus": borc,
             "ciro_kurus": gelir, "maliyet_kurus": gider,
-            "brut_kar_kurus": gelir - gider}
+            "brut_kar_kurus": gelir - gider, "konsolide": konsolide}
 
 
 def _gunluk_gider(faaliyet=None, bugun=None, gun: int = 90) -> int:
@@ -141,15 +160,23 @@ def vadeli_ozet(faaliyet=None, bugun=None, gun: int = 30) -> dict:
 
 
 def karlilik(gelir_kurus: int, maliyet_kurus: int) -> dict:
-    """Brut kar ve marj; gelir sifirsa marj sifirdir (bolme hatasi yok)."""
+    """Brut kar ve marj. Gelir sifirsa marj None (N/A) doner; boylece '%0'
+    gibi yanlis bir basari gostergesi uretilmez."""
     brut = gelir_kurus - maliyet_kurus
-    marj = (brut / gelir_kurus * 100) if gelir_kurus else 0.0
-    return {"brut_kar_kurus": brut, "brut_marj_yuzde": round(marj, 2)}
+    marj = round(brut / gelir_kurus * 100, 2) if gelir_kurus else None
+    return {"brut_kar_kurus": brut, "brut_marj_yuzde": marj}
+
+
+def marj_metin(marj_yuzde) -> str:
+    """Marj yoksa (N/A) tire dondurur."""
+    return "\u2014" if marj_yuzde is None else yuzde_metin(marj_yuzde)
 
 
 def marj_riski(marj_yuzde, hedef_yuzde: float = 15.0) -> str:
-    """Marj icin renkten bagimsiz durum uretir: healthy / warning / danger."""
-    marj = float(marj_yuzde or 0)
+    """Marj icin durum: healthy / warning / danger / na (marj yok)."""
+    if marj_yuzde is None:
+        return "na"
+    marj = float(marj_yuzde)
     if marj < 0:
         return "danger"
     if marj < float(hedef_yuzde):

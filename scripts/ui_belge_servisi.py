@@ -126,6 +126,24 @@ def _guvenli_ad(dosya_adi):
     return govde[:120]
 
 
+# Uzanti -> beklenen sihirli bayt imzasi (MIME dogrulamasi)
+_IMZALAR = {
+    ".pdf": b"%PDF",
+    ".png": b"\x89PNG\r\n\x1a\n",
+    ".jpg": b"\xff\xd8\xff",
+    ".jpeg": b"\xff\xd8\xff",
+    ".bmp": b"BM",
+}
+
+
+def _icerik_uzantiya_uygun(icerik, uzanti) -> bool:
+    bas = bytes(icerik[:16])
+    if uzanti == ".webp":
+        return bas.startswith(b"RIFF") and bas[8:12] == b"WEBP"
+    imza = _IMZALAR.get(uzanti)
+    return bool(imza) and bas.startswith(imza)
+
+
 def yuklenen_dosyayi_kaydet(dosya_adi, icerik):
     if not isinstance(icerik, (bytes, bytearray)) or not icerik:
         raise ValueError("Dosya boş.")
@@ -135,6 +153,8 @@ def yuklenen_dosyayi_kaydet(dosya_adi, icerik):
     uzanti = Path(ad).suffix.casefold()
     if uzanti not in BELGE_UZANTILARI:
         raise ValueError("Desteklenen dosyalar: PDF, JPG, JPEG, PNG, WEBP ve BMP.")
+    if not _icerik_uzantiya_uygun(icerik, uzanti):
+        raise ValueError("Dosya içeriği uzantısıyla uyuşmuyor (MIME doğrulaması başarısız).")
     GELEN_EVRAK.mkdir(parents=True, exist_ok=True)
     hedef = GELEN_EVRAK / f"ui_{datetime.now():%Y%m%d_%H%M%S_%f}_{ad}"
     hedef.write_bytes(bytes(icerik))

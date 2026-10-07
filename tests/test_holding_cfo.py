@@ -72,9 +72,11 @@ class HoldingCfoTestleri(unittest.TestCase):
         self.assertEqual(kar["brut_kar_kurus"], 200_000)   # GP = Rev - Cost
         self.assertEqual(kar["brut_marj_yuzde"], 40.0)     # GM = GP / Rev
 
-    def test_gelir_sifir_marj_sifir(self):
+    def test_gelir_sifir_marj_na(self):
         kar = finans_motoru.karlilik(0, 100)
-        self.assertEqual(kar["brut_marj_yuzde"], 0.0)      # bolme hatasi yok
+        self.assertIsNone(kar["brut_marj_yuzde"])          # %0 degil, N/A
+        self.assertEqual(finans_motoru.marj_riski(None), "na")
+        self.assertEqual(finans_motoru.marj_metin(None), "\u2014")
 
     def test_negatif_maliyet_danger(self):
         self.assertEqual(finans_motoru.marj_riski(-5), "danger")

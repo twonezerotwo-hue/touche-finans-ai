@@ -8,7 +8,6 @@ bütçe sapması, banka mutabakatı ve onay matrisini aynı SQLite verisine bağ
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import date, timedelta
@@ -114,8 +113,17 @@ def sirketler_arasi_transfer(kaynak_faaliyet, hedef_faaliyet, tarih, tutar,
     tutar_kurus = _kurus(tutar)
     if tutar_kurus <= 0:
         raise ValueError("Transfer tutarı sıfırdan büyük olmalı.")
-    kur_mikro = max(1, int(float(kur) * 1_000_000))
-    tl_kurus = int(round(tutar_kurus * (kur_mikro / 1_000_000))) if str(pb).upper() != "TL" else tutar_kurus
+    pb_ust = str(pb).upper()
+    try:
+        kur_deger = float(kur)
+    except (TypeError, ValueError):
+        kur_deger = 0.0
+    if pb_ust not in {"TL", "TRY"} and kur_deger <= 0:
+        raise ValueError("Doviz transferi icin gecerli kur gerekli; eksik kur 1.0 varsayilamaz.")
+    if pb_ust in {"TL", "TRY"}:
+        kur_deger = 1.0
+    kur_mikro = max(1, int(kur_deger * 1_000_000))
+    tl_kurus = int(round(tutar_kurus * (kur_mikro / 1_000_000))) if pb_ust not in {"TL", "TRY"} else tutar_kurus
     islem_id = _kimlik("IC")
     kaynak_fis, hedef_fis = f"JRN-{islem_id}-SRC", f"JRN-{islem_id}-DST"
     with _baglanti() as con:

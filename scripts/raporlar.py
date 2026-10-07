@@ -70,28 +70,60 @@ def scenario_comparison() -> dict:
     return {"tip": "scenario_comparison", **senaryo_karsilastir()}
 
 
+def _mapping_yeterli() -> bool:
+    """Ortak hesap plani ve eslemeler rapor uretmeye yeterli mi?"""
+    from veri_katmani import baglanti, veritabani_hazirla
+
+    veritabani_hazirla()
+    with baglanti() as con:
+        hesap = con.execute(
+            "SELECT COUNT(*) n FROM hesaplar WHERE hesap_tipi IN "
+            "('VARLIK','YUKUMLULUK','OZKAYNAK','GELIR','GIDER')"
+        ).fetchone()["n"]
+        esleme = con.execute("SELECT COUNT(*) n FROM hesap_eslemeleri").fetchone()["n"]
+    return hesap >= 5 and esleme > 0
+
+
 def trial_balance(baslangic="2000-01-01", bitis="2099-12-31") -> dict:
-    return {"tip": "trial_balance", "kalemler": konsolide_mizan(baslangic, bitis, True)}
+    if not _mapping_yeterli():
+        return {"tip": "trial_balance", "durum": "Accounting mapping incomplete", "kalemler": []}
+    kalemler = konsolide_mizan(baslangic, bitis, True)
+    borc = round(sum(x["borc"] for x in kalemler), 2)
+    alacak = round(sum(x["alacak"] for x in kalemler), 2)
+    denk = abs(borc - alacak) < 0.01
+    return {"tip": "trial_balance", "durum": "OK" if denk else "Accounting mapping incomplete",
+            "borc_toplam": borc, "alacak_toplam": alacak, "denk": denk, "kalemler": kalemler}
 
 
 def kar_zarar(baslangic="2000-01-01", bitis="2099-12-31") -> dict:
-    """Basit yonetim P&L'i: gelir - gider (ortak hesap plani uzerinden)."""
+    """Yonetim P&L'i: gelir - gider (ortak hesap plani uzerinden)."""
+    if not _mapping_yeterli():
+        return {"tip": "kar_zarar", "durum": "Accounting mapping incomplete"}
     mizan = konsolide_mizan(baslangic, bitis, True)
     gelir = sum(x["alacak"] - x["borc"] for x in mizan if x["hesap_tipi"] == "GELIR")
     gider = sum(x["borc"] - x["alacak"] for x in mizan if x["hesap_tipi"] == "GIDER")
-    return {"tip": "kar_zarar", "gelir": round(gelir, 2), "gider": round(gider, 2),
+    return {"tip": "kar_zarar", "durum": "OK", "gelir": round(gelir, 2), "gider": round(gider, 2),
             "net": round(gelir - gider, 2), "kaynak": "ortak hesap plani (yonetim gorunumu)"}
 
 
 def bilanco(baslangic="2000-01-01", bitis="2099-12-31") -> dict:
-    """Basit yonetim bilanco ozeti (varlik/yukumluluk/ozkaynak)."""
+    """Yonetim bilanco ozeti; VARLIK = YUKUMLULUK + OZKAYNAK + DONEM KARI invariantini test eder."""
+    if not _mapping_yeterli():
+        return {"tip": "bilanco", "durum": "Accounting mapping incomplete"}
     mizan = konsolide_mizan(baslangic, bitis, True)
+
     def _top(tip: str) -> float:
-        return round(sum(x["borc"] - x["alacak"] if x["hesap_tipi"] == "VARLIK"
-                         else x["alacak"] - x["borc"] for x in mizan if x["hesap_tipi"] == tip), 2)
-    return {"tip": "bilanco", "varlik": _top("VARLIK"), "yukumluluk": _top("YUKUMLULUK"),
-            "ozkaynak": _top("OZKAYNAK"),
-            "denk": abs(_top("VARLIK") - (_top("YUKUMLULUK") + _top("OZKAYNAK"))) < 1,
+        borc_normal = tip in {"VARLIK", "GIDER"}
+        return round(sum((x["borc"] - x["alacak"]) if borc_normal else (x["alacak"] - x["borc"])
+                         for x in mizan if x["hesap_tipi"] == tip), 2)
+
+    varlik, yukumluluk, ozkaynak = _top("VARLIK"), _top("YUKUMLULUK"), _top("OZKAYNAK")
+    donem_kari = round(_top("GELIR") - _top("GIDER"), 2)
+    fark = round(varlik - (yukumluluk + ozkaynak + donem_kari), 2)
+    denk = abs(fark) < 1
+    return {"tip": "bilanco", "durum": "OK" if denk else "Accounting mapping incomplete",
+            "varlik": varlik, "yukumluluk": yukumluluk, "ozkaynak": ozkaynak,
+            "donem_kari": donem_kari, "fark": fark, "denk": denk,
             "kaynak": "ortak hesap plani (yonetim gorunumu)"}
 
 
