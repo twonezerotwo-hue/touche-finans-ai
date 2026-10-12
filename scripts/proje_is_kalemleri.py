@@ -9,7 +9,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from config import FIRMALAR, ana_excel_yolu
+from config import ana_excel_yolu
 from excel_deposu import guvenli_degistir
 from finans_cekirdegi import _baglanti, faaliyet_anahtari_bul, veritabani_yedekle
 from guvenlik import audit_yaz

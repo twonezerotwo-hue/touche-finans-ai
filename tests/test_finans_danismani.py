@@ -225,7 +225,6 @@ class FinansDanismaniDefterTestleri(unittest.TestCase):
         ozet = fd.nakit_hareket_ozeti("gursar_mimarlik")
         hareketler = fd.son_nakit_hareketleri("gursar_mimarlik", limit=500)
         odemeler = [x for x in hareketler if x["yon"] == "Ödeme"]
-        finansman = [x for x in hareketler if x["yon"] == "Kredi kullanımı"]
         self.assertAlmostEqual(ozet["odeme_tutari"], 100_000, places=2)
         self.assertEqual(ozet["odeme_adedi"], len(odemeler))
         self.assertAlmostEqual(ozet["finansman_girisi"], 278_260.50, places=2)

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime
-from pathlib import Path
 
 from config import FIRMALAR, ana_excel_yolu
 import finans_cekirdegi as _cekirdek

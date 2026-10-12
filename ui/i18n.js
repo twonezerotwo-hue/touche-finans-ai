@@ -13,7 +13,9 @@
     nav_ai: "AI CFO",
     nav_rapor: "Raporlar",
     nav_yonetim: "Yönetim",
-    nav_panel: "Mevcut Panel",
+    nav_panel: "CFO Asistanı",
+    nav_asistan: "CFO Asistanı",
+    nav_islemler: "Kayıt / İşlemler",
 
     kpi_nakit: "Kullanılabilir Nakit",
     kpi_toplam_nakit: "Toplam Nakit",

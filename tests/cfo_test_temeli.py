@@ -14,7 +14,6 @@ import cfo_niyet
 import cfo_sohbet
 import cfo_varliklar
 import config
-import excel_deposu
 import excel_yazici
 import finans_cekirdegi as cekirdek
 import guvenlik

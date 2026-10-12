@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string

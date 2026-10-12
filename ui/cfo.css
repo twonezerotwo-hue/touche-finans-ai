@@ -125,3 +125,19 @@ table.cfo-table tr:hover td { background: #f7fbf8; }
   .cfo-app { padding: 12px; }
   .cfo-kpi .value { font-size: 20px; }
 }
+
+/* --- Gezinme: kirinti, detay sayfasi, yonlendirmeli soru secenekleri --- */
+.cfo-breadcrumb { font-size: 13px; color: var(--cfo-muted); margin: 0 0 8px; }
+.cfo-breadcrumb a { color: var(--cfo-green); text-decoration: none; }
+.cfo-breadcrumb a:hover { text-decoration: underline; }
+.cfo-kpi-yok .value { font-size: 14px; color: var(--cfo-muted); letter-spacing: .02em; }
+.cfo-tanim { margin: 0 0 12px; font-size: 13px; color: var(--cfo-muted); }
+.cfo-table tbody tr[style*="cursor: pointer"]:hover { background: var(--cfo-mint); }
+.cfo-question { margin: 6px 0 12px; padding: 10px 12px; border: 1px dashed var(--cfo-line); border-radius: 12px; background: #fff; }
+.cfo-question.cevaplandi { opacity: .55; }
+.cfo-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cfo-chip { border: 1px solid var(--cfo-green); background: #fff; color: var(--cfo-green); border-radius: 999px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
+.cfo-chip:hover:not(:disabled) { background: var(--cfo-mint); }
+.cfo-chip:disabled { cursor: default; }
+.cfo-chip-iptal { border-color: var(--cfo-line); color: var(--cfo-muted); }
+.cfo-ipucu { display: block; color: var(--cfo-muted); margin-bottom: 6px; }

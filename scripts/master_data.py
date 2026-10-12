@@ -4,7 +4,6 @@
 import logging
 import threading
 from copy import deepcopy
-from pathlib import Path
 from openpyxl import load_workbook
 from config import FIRMALAR, ana_excel_yolu
 from faaliyet_sema import anahtar

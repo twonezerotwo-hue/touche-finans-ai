@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
-import hashlib
 import os
 import sys
 import zipfile

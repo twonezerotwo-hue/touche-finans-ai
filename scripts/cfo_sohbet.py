@@ -23,7 +23,7 @@ from pathlib import Path
 
 import config
 import cfo_niyet as N
-from cfo_varliklar import BELIRSIZ, ONERI, TEKIL, Katalog, Varlik, coz, katalog_yukle, kismi_coz, norm
+from cfo_varliklar import BELIRSIZ, ONERI, TEKIL, Katalog, coz, katalog_yukle, kismi_coz, norm
 from dogrulayici import FAIL, deterministik_dogrula
 from guvenlik import audit_yaz
 from master_data import master_data_oku
@@ -117,14 +117,17 @@ def _bos_taslak(metin, aktor, tekrar_no=0, bugun=None):
         "tutar": None, "pb": None, "pb_acik": False, "tarih": None, "tarih_kaynagi": "", "hesap": None,
         "hesap_kaynagi": "", "kur": None, "ortak_odemesi": False, "notlar": [], "adimlar": [],
         "bekleyen_alan": None, "bekleyen_yeni_cari": None, "onay_token": None, "belge_id": None,
-        "belirsiz": {}, "oneri": {}, "tarih_hatasi": "",
+        "belirsiz": {}, "oneri": {}, "tarih_hatasi": "", "kapsam": None,
     }
 
 
 def _niyetten_uygula(t, n: N.Niyet, katalog: Katalog):
     """Cikarilan niyeti taslaga yazar; zaten bilinen (kullanicinin onayladigi) alanlari ezmez."""
     if n.faaliyet and not t["faaliyet"]:
-        t["faaliyet"] = n.faaliyet.kimlik
+        if _kapsamda(t, n.faaliyet.kimlik):
+            t["faaliyet"] = n.faaliyet.kimlik
+        else:
+            t["notlar"].append("Metindeki faaliyet için yetkiniz yok; faaliyet yeniden sorulacak.")
     if n.proje and not t["proje"]:
         t["proje"] = n.proje.ad
     if n.kalem and not t["kalem_id"]:
@@ -157,6 +160,12 @@ def _niyetten_uygula(t, n: N.Niyet, katalog: Katalog):
 # ---------------------------------------------------------------------------
 # Eksik alan ve soru uretimi
 # ---------------------------------------------------------------------------
+
+def _kapsamda(t, faaliyet_kimlik) -> bool:
+    """Oturumun yetkili faaliyetleri disindaki faaliyet secilemez (sunucu tarafi kapsam)."""
+    kapsam = t.get("kapsam")
+    return not kapsam or "*" in kapsam or faaliyet_kimlik in kapsam
+
 
 def _faaliyet(t, katalog):
     return katalog.faaliyet(t["faaliyet"]) if t["faaliyet"] else None
@@ -277,12 +286,12 @@ def _secenek(id_, etiket, aciklama=""):
 
 
 def soru_uret(t, alan, katalog: Katalog) -> dict:
-    f = _faaliyet(t, katalog)
     if alan == "faaliyet":
         adaylar = t["belirsiz"].get("faaliyet")
         liste = [katalog.faaliyet(a["kimlik"]) for a in adaylar] if adaylar else katalog.faaliyetler
+        liste = [x for x in liste if x and _kapsamda(t, x.kimlik)]
         return {"alan": alan, "metin": "Hangi faaliyet için?",
-                "secenekler": [_secenek(x.kimlik, x.gorunen()) for x in liste if x]}
+                "secenekler": [_secenek(x.kimlik, x.gorunen()) for x in liste]}
     if alan == "proje":
         projeler = katalog.projeleri(t["faaliyet"])
         secenekler = [_secenek(p.ad, p.ad) for p in projeler]
@@ -385,9 +394,10 @@ def _uygula(t, alan, deger, katalog: Katalog, kaynak: str):
     if not deger:
         raise ValueError("Boş cevap.")
     if alan == "faaliyet":
-        f = katalog.faaliyet(deger) if kaynak == "secim" else _entity_sec(katalog.faaliyetler, deger, "Faaliyet")
-        if not f:
-            raise ValueError("Faaliyet bulunamadı.")
+        f = katalog.faaliyet(deger) if kaynak == "secim" else _entity_sec(
+            [x for x in katalog.faaliyetler if _kapsamda(t, x.kimlik)], deger, "Faaliyet")
+        if not f or not _kapsamda(t, f.kimlik):
+            raise ValueError("Faaliyet bulunamadı veya bu faaliyet için yetkiniz yok.")
         if t["faaliyet"] != f.kimlik:
             t["proje"], t["kalem_id"], t["kalem_ad"], t["hesap"], t["cari"] = None, None, None, None, None
         t["faaliyet"] = f.kimlik
@@ -581,7 +591,7 @@ def _yanit(t, katalog, soru=None, kayit_taslagi=None, hata=None, uyarilar=None) 
         "kanitlar": [], "aksiyonlar": [], "degisiklik_yapildi": False,
         "cfo": {"taslak_id": t["id"], "durum": t["durum"], "alanlar": o, "soru": soru, "notlar": list(t["notlar"]),
                 "belge_id": t.get("belge_id")},
-        "kayit_taslagi": kayit_taslagi,
+        "kayit_taslagi": kayit_taslagi, "hata": bool(hata),
     }
 
 
@@ -729,7 +739,7 @@ def _ilerlet(t, katalog, hata=None) -> dict:
 # Disari acik API
 # ---------------------------------------------------------------------------
 
-def baslat(niyet: N.Niyet, aktor, katalog: Katalog | None = None, yine_de=False, bugun=None) -> dict:
+def baslat(niyet: N.Niyet, aktor, katalog: Katalog | None = None, yine_de=False, bugun=None, kapsam=None) -> dict:
     """Cikarilan niyetle yeni taslak baslatir. Ayni talimat bugun zaten isleme alinmissa uyarir."""
     katalog = katalog or katalog_yukle()
     with _LOCK:
@@ -742,7 +752,8 @@ def baslat(niyet: N.Niyet, aktor, katalog: Katalog | None = None, yine_de=False,
             yanit["cevap"] = "Bu talimat için zaten açık bir taslak var; yeni taslak oluşturmadım.\n" + yanit["cevap"]
             return yanit
         yapilmis = [x for x in mevcut if x["durum"] == TAMAMLANDI]
-        if yapilmis and not yine_de:
+        # Tekrar korumasi yalniz TUTAR iceren talimatlar icindir; "yeni odeme" gibi bos baslangic finansal komut degildir.
+        if yapilmis and not yine_de and niyet.tutar:
             son = yapilmis[-1]
             audit_yaz("cfo_taslak_tekrar_engellendi", taslak_id=son["id"], belge_id=son.get("belge_id"),
                       orijinal_talimat=niyet.metin, aktor=str(aktor))
@@ -759,6 +770,7 @@ def baslat(niyet: N.Niyet, aktor, katalog: Katalog | None = None, yine_de=False,
                 "kayit_taslagi": None,
             }
         t = _bos_taslak(niyet.metin, aktor, tekrar_no=len(yapilmis) + len(mevcut) if yine_de else 0, bugun=bugun)
+        t["kapsam"] = list(kapsam) if kapsam else None
         _niyetten_uygula(t, niyet, katalog)
         if "tarih_hatasi" in t and t["tarih_hatasi"]:
             t["tarih"] = None

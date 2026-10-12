@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 
-from cfo_varliklar import BELIRSIZ, ONERI, TEKIL, YOK, Katalog, Varlik, _ek_eslesme, coz, jetonlar, kismi_adaylar, kismi_coz, norm
+from cfo_varliklar import BELIRSIZ, ONERI, TEKIL, YOK, Cozum, Katalog, Varlik, _ek_eslesme, coz, kismi_adaylar, kismi_coz, norm
 from dogrulayici import _tutar_cevir
 
 # --- Islem tipleri (kullanici dili -> iç tip) ---
@@ -330,7 +330,6 @@ def analiz_et(metin: str, katalog: Katalog, bugun: date | None = None, zorla: bo
     n.ortak_odemesi = bool(re.search(r"\bortak\b", sade))
 
     # --- varliklar: faaliyet -> proje -> is kalemi -> cari -> hesap (token tuketimi ile) ---
-    mj = jetonlar(ham)
     tuketilen: frozenset = frozenset()
 
     c = coz(ham, katalog.faaliyetler, tuketilen, bulanik=True)

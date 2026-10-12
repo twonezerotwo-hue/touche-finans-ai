@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import load_workbook
 from openpyxl.chart import BarChart, Reference
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
