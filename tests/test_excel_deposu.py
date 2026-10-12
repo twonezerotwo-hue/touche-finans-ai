@@ -58,7 +58,7 @@ class DepoTestTemeli(unittest.TestCase):
         self.temp.cleanup()
 
     def xlsx_dosyalari(self):
-        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*.xlsx"))
+        return sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob("*.xlsx"))
 
     def audit_olaylari(self, olay=None):
         if not self.audit.exists():

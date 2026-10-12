@@ -29,9 +29,8 @@ if str(_SCRIPTS) not in sys.path:
 
 def pytest_sessionstart(session):  # noqa: D103
     import config
+    from _ortam import yol_izolasyon_hatasi
 
-    ana = str(config.ana_excel_yolu()).replace("\\", "/")
-    if not ana.startswith(str(_KOK).replace("\\", "/")):
-        raise RuntimeError(f"Test oturumu uretim Excel yoluna isaret ediyor: {ana}")
-    if "OneDrive" in ana or "twone" in ana:
-        raise RuntimeError(f"Test oturumu kullanici klasorune isaret ediyor: {ana}")
+    neden = yol_izolasyon_hatasi(config.ana_excel_yolu(), _KOK)
+    if neden:
+        raise RuntimeError(neden)

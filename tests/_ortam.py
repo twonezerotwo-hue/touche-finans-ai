@@ -13,6 +13,23 @@ if str(_SCRIPTS) not in sys.path:
 import config  # noqa: E402
 
 
+def yol_izolasyon_hatasi(ana, kok, onedrive=None):
+    """Test ANA yolu izole mi? Hata nedenini dondurur, guvenliyse None.
+
+    Kural: yol gecici test kokunun ICINDE olmali ve kok, kullanicinin OneDrive agacinin
+    icinde olmamali. (Windows'ta varsayilan gecici klasor ``C:\\Users\\<ad>\\AppData\\...`` altindadir;
+    bu yuzden kullanici adina bakan bir alt-dize kontrolu yanlis alarm verir.)
+    """
+    ana_p = Path(ana).resolve()
+    kok_p = Path(kok).resolve()
+    if kok_p not in ana_p.parents:
+        return f"Test oturumu uretim Excel yoluna isaret ediyor: {ana_p}"
+    onedrive_p = Path(onedrive if onedrive is not None else Path.home() / "OneDrive").resolve()
+    if onedrive_p == kok_p or onedrive_p in kok_p.parents:
+        return f"Test koku kullanicinin OneDrive klasorunun icinde: {kok_p}"
+    return None
+
+
 class AnaExcelYonlendirme:
     """``with`` veya setUp/tearDown ile ana + yedek Excel yolunu gecici dosyalara cevirir."""
 

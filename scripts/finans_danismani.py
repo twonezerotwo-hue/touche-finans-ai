@@ -14,6 +14,7 @@ import logging
 import re
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
@@ -54,12 +55,21 @@ class DanismanProfili:
         return cls(risk=risk, rezerv_gun=rezerv, yatirim_vadesi_ay=vade)
 
 
+@contextmanager
 def _baglanti():
     veritabanini_hazirla()
     # Tek DB yolu: finans_cekirdegi.DB_PATH (testlerde ve operasyonda yonlendirilebilir).
     con = sqlite3.connect(_cekirdek.DB_PATH, timeout=20)
     con.row_factory = sqlite3.Row
-    return con
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        # ``with sqlite3.connect()`` kapatmaz; Windows'ta acik tutamac finans.db'yi kilitli birakir.
+        con.close()
 
 
 def _tarih_coz(deger):

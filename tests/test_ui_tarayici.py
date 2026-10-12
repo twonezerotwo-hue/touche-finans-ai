@@ -37,13 +37,40 @@ YOL = _tarayici_yolu()
 KOMUT = "Göktürk okuluna Gürsar Mimarlık adına Devrim'e 10 bin TL ödeme yapıldı."
 
 
+class _SayacliSunucu(ThreadingHTTPServer):
+    """Devam eden istekleri sayar. Sayfa kapandiktan sonra suren bir istek (ornegin /api/dashboard) finans.db'yi
+    acik tutar; Windows'ta bu, gecici klasorun silinmesini engeller ve yama kalkinca istek uretim yoluna duser."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._aktif = 0
+        self._kilit = threading.Condition()
+
+    def process_request(self, request, client_address):
+        with self._kilit:
+            self._aktif += 1
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self._kilit:
+                self._aktif -= 1
+                self._kilit.notify_all()
+
+    def bosalmayi_bekle(self, sure=15.0):
+        with self._kilit:
+            return self._kilit.wait_for(lambda: self._aktif == 0, timeout=sure)
+
+
 @unittest.skipIf(sync_playwright is None, "Playwright kurulu değil")
 class TarayiciTestleri(CfoTestTemeli):
     @classmethod
     def setUpClass(cls):
         import finans_asistani_sunucu as srv
 
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
+        cls.server = _SayacliSunucu(("127.0.0.1", 0), srv.Handler)
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.pw = sync_playwright().start()
@@ -87,9 +114,11 @@ class TarayiciTestleri(CfoTestTemeli):
             self.assertEqual(self.hatalar, [], "Tarayıcı konsolunda hata/CSP ihlali var")
         finally:
             self.sayfa.close()
+            bosaldi = self.server.bosalmayi_bekle()
             for y in reversed(self._y2):
                 y.stop()
             super().tearDown()
+            self.assertTrue(bosaldi, "Sunucuda tamamlanmayan istek kaldı")
 
     # --- yardimcilar ---
     def gonder(self, metin):
