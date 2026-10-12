@@ -140,6 +140,52 @@ class AtomiklikVeKorumaTestleri(DepoTestTemeli):
         self.assertIn("tüm Excel pencerelerini kapatın", sonuc["hata"])
         self.assertEqual(sonuc["hata_kodu"], "ANA_KILITLI")
 
+    def _iki_surumlu(self):
+        excel_yazici.yaz("gursar_mimarlik", veri(), "L-1")
+        excel_yazici.yaz("gursar_mimarlik", veri(kayit(Tutar=2222)), "L-2")
+        return depo.sha256(self.ana), depo.sha256(self.yedek)
+
+    def test_excel_acikken_yazma_baslamadan_reddedilir_yedek_ilerlemez_geri_donus_calisir(self):
+        """Excel dosyayi acik tutarken (paylasim kilidi) yapilan deneme YEDEK'i MAIN ile ezmez:
+        'son islemi geri al' (MAIN=V3, YEDEK=V2 -> MAIN=V2) hala mumkun kalir."""
+        v3, v2 = self._iki_surumlu()
+        gercek_open = open
+
+        def kilitli_open(yol, *a, **k):
+            if Path(yol) == self.ana and "+" in (a[0] if a else k.get("mode", "r")):
+                raise PermissionError(13, "Permission denied (WinError 32 benzeri)")
+            return gercek_open(yol, *a, **k)
+
+        with patch.object(depo, "open", create=True, side_effect=kilitli_open):
+            sonuc = excel_yazici.yaz("gursar_mimarlik", veri(kayit(Tutar=3333)), "L-3")
+        self.assertFalse(sonuc["basari"])
+        self.assertEqual(sonuc["hata_kodu"], "ANA_KILITLI")
+        self.assertIn("tüm Excel pencerelerini kapatın", sonuc["hata"])
+        self.assertEqual((depo.sha256(self.ana), depo.sha256(self.yedek)), (v3, v2))      # ikisi de ayni
+        self.assertEqual(depo.gecici_dosyalar(), [])
+        self.assertEqual(self.audit_olaylari("excel_islem")[-1]["hata_kodu"], "ANA_KILITLI")
+        depo.yedekten_geri_don(aktor="ops", neden="kilit sonrasi", onay="GERI-DON")
+        self.assertEqual((depo.sha256(self.ana), depo.sha256(self.yedek)), (v2, v3))
+        # Excel kapatilinca ayni islem basarili olur
+        # (geri donus sonrasi ANA=V2; yeni yazma YEDEK'i V2 yapar)
+        self.assertTrue(excel_yazici.yaz("gursar_mimarlik", veri(kayit(Tutar=3333)), "L-4")["basari"])
+        self.assertEqual(depo.sha256(self.yedek), v2)
+
+    def test_disaridan_degisen_ana_yedegi_ilerletmez(self):
+        v3, v2 = self._iki_surumlu()
+
+        def eszamanli(wb):
+            baska = load_workbook(self.ana)
+            baska["99_Ayarlar"]["A30"] = "kullanici"
+            baska.save(self.ana)
+            baska.close()
+            return {"basari": True}
+
+        with self.assertRaises(depo.DepoHatasi) as cm:
+            depo.guvenli_degistir(eszamanli, kaynak="test")
+        self.assertEqual(cm.exception.kod, "ANA_DEGISTI")
+        self.assertEqual(depo.sha256(self.yedek), v2)                  # YEDEK onceki surumde kaldi
+
     def test_formul_hucresi_ezilemez(self):
         once = depo.sha256(self.ana)
 
@@ -347,6 +393,27 @@ class GeriDonusTestleri(DepoTestTemeli):
             depo.yedekten_geri_don(aktor="", neden="x", onay="GERI-DON")
         self.assertEqual(depo.sha256(self.ana), v2)
 
+    def test_geri_donus_yedek_yerlestirilemezse_kurtarma_dosyasi_sonraki_yazmada_silinmez(self):
+        """Geri donusun son adimi basarisiz olursa onceki ANA surumu desene uymayan adla korunur."""
+        v2, v1 = self._iki_surum()
+        gercek = depo.os.replace
+
+        def kismen_basarisiz(kaynak, hedef):
+            if Path(hedef) == self.yedek:
+                raise OSError("yedek yazilamadi (test)")
+            return gercek(kaynak, hedef)
+
+        with patch.object(depo.os, "replace", side_effect=kismen_basarisiz):
+            with self.assertRaises(depo.DepoHatasi) as cm:
+                depo.yedekten_geri_don(aktor="ops", neden="test", onay="GERI-DON")
+        self.assertEqual(cm.exception.kod, "YEDEK_YERLESTIRILEMEDI")
+        kurtarma = Path(self.audit_olaylari("excel_geri_donus")[-1]["kurtarma_dosyasi"])
+        self.assertTrue(kurtarma.exists())
+        self.assertEqual(depo.sha256(kurtarma), v2)                 # onceki ANA (V2) kaybolmadi
+        self.assertFalse(depo._GECICI_RE.match(kurtarma.name))       # temizlik desenine uymaz
+        excel_yazici.yaz("gursar_mimarlik", veri(kayit(Tutar=1)), "B-3")   # sonraki yazma temizlik yapar
+        self.assertTrue(kurtarma.exists())
+
     def test_ayni_surumde_geri_donus_reddedilir(self):
         excel_yazici.yaz("gursar_mimarlik", veri(), "B-1")
         depo.yedegi_yenile()
@@ -357,7 +424,8 @@ class GeriDonusTestleri(DepoTestTemeli):
     def test_yapay_zeka_http_ve_telegram_katmani_geri_donusu_cagiramaz(self):
         """Geri donus yalniz operasyon aracindadir; hicbir otonom katman onu icermez."""
         scripts = Path(__file__).resolve().parents[1] / "scripts"
-        izinli = {"excel_deposu.py", "excel_operasyon.py"}
+        # Yalniz insan/operator araclari: operasyon komutu ve TEST kitaplari uzerinde calisan Windows dogrulama araci.
+        izinli = {"excel_deposu.py", "excel_operasyon.py", "windows_dogrulama.py"}
         for dosya in scripts.glob("*.py"):
             if dosya.name in izinli:
                 continue
@@ -365,6 +433,70 @@ class GeriDonusTestleri(DepoTestTemeli):
         ui = Path(__file__).resolve().parents[1] / "ui"
         for dosya in ui.glob("*.js"):
             self.assertNotIn("geri-don", dosya.read_text(encoding="utf-8").lower(), dosya.name)
+
+
+class GeciciDosyaKonumuTestleri(DepoTestTemeli):
+    """Gecici Excel dosyalari proje temp alaninda olusur ve temizlenir; OneDrive klasorune dusmez."""
+
+    def _konumlar(self):
+        konumlar = []
+        gercek = depo._gecici_yol
+
+        def kaydet(hedef):
+            yol = gercek(hedef)
+            konumlar.append(yol.parent)
+            return yol
+
+        return konumlar, patch.object(depo, "_gecici_yol", side_effect=kaydet)
+
+    def test_gecici_dosya_proje_temp_alaninda_olusur_ve_silinir(self):
+        if not depo._ayni_birim(config.TEMP_DIR, self.ana.parent):
+            self.skipTest("test klasorleri farkli diskte")
+        konumlar, yama = self._konumlar()
+        with yama:
+            self.assertTrue(excel_yazici.yaz("gursar_mimarlik", veri(), "T-1")["basari"])
+        self.assertTrue(konumlar)
+        self.assertEqual({k.resolve() for k in konumlar}, {Path(config.TEMP_DIR).resolve()})
+        self.assertEqual(depo.gecici_dosyalar(), [])
+        self.assertEqual(sorted(p.name for p in self.ana.parent.iterdir()), ["ANA.xlsx"])   # ANA klasorune gecici dusmedi
+
+    def test_temp_alani_ayri_birimdeyse_hedefin_klasoru_kullanilir(self):
+        konumlar, yama = self._konumlar()
+        with yama, patch.object(depo, "_ayni_birim", return_value=False):
+            self.assertTrue(excel_yazici.yaz("gursar_mimarlik", veri(), "T-2")["basari"])
+        self.assertTrue({k.resolve() for k in konumlar} <= {self.ana.parent.resolve(), self.yedek.parent.resolve()})
+        self.assertEqual(depo.gecici_dosyalar(), [])
+
+    def test_temp_alanindaki_artik_dosya_silinir_ilgisiz_dosyaya_dokunulmaz(self):
+        temp = Path(config.TEMP_DIR)
+        temp.mkdir(parents=True, exist_ok=True)
+        artik = temp / f".ANA.{'a' * 32}.tmp.xlsx"
+        artik.write_bytes(b"yarim")
+        ilgisiz = temp / "baska.xlsx"
+        ilgisiz.write_bytes(b"x")
+        try:
+            self.assertIn(str(artik), depo.gecici_dosyalar())
+            self.assertTrue(excel_yazici.yaz("gursar_mimarlik", veri(), "T-3")["basari"])
+            self.assertFalse(artik.exists())
+            self.assertTrue(ilgisiz.exists())
+        finally:
+            ilgisiz.unlink(missing_ok=True)
+            artik.unlink(missing_ok=True)
+
+
+class VarsayilanYedekYoluTestleri(unittest.TestCase):
+    def test_yedek_ana_ile_ayni_klasorde_backup_son_ekiyle(self):
+        ana = Path("klasor") / "Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx"
+        self.assertEqual(config.varsayilan_yedek_yolu(ana),
+                         Path("klasor") / "Touche Holding - AI Ready Finans Yönetim Sistemi_backup.xlsx")
+
+    def test_ana_excel_ayarla_yedek_verilmezse_ayni_kurali_kullanir(self):
+        eski = (config.ana_excel_yolu(), config.yedek_excel_yolu())
+        try:
+            config.ana_excel_ayarla(Path("x") / "Defter.xlsx")
+            self.assertEqual(config.yedek_excel_yolu(), Path("x") / "Defter_backup.xlsx")
+        finally:
+            config.ana_excel_ayarla(*eski)
 
 
 class TekYazmaHattiStatikTestleri(unittest.TestCase):
@@ -388,6 +520,12 @@ class TekYazmaHattiStatikTestleri(unittest.TestCase):
             metin = dosya.read_text(encoding="utf-8")
             for k in yasak:
                 self.assertNotIn(k, metin, f"{dosya.name}: '{k}'")
+
+    def test_kaynak_kodda_kisisel_mutlak_yol_yok(self):
+        for dosya in self.SCRIPTS.glob("*.py"):
+            metin = dosya.read_text(encoding="utf-8")
+            self.assertNotIn("twone", metin, dosya.name)
+            self.assertNotIn("C:\\Users", metin, dosya.name)
 
     def test_ana_excel_yolu_yalniz_config_uzerinden_cozulur(self):
         """Kullanici masaustu yolu / sabit Excel adi yalnizca config.py'de bulunur."""

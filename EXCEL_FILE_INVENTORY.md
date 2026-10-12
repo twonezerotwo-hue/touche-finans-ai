@@ -15,7 +15,7 @@ The tooling to produce the real inventory was built and tested instead; run it o
 | Role | Setting | Default on Windows |
 |---|---|---|
 | MAIN | `TOUCHE_MAIN_WORKBOOK` → `config.MAIN_WORKBOOK_PATH` | the existing `…\Desktop\Touche\Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx` (name unchanged) |
-| BACKUP | `TOUCHE_BACKUP_WORKBOOK` → `config.BACKUP_WORKBOOK_PATH` | `C:\ai-excel\yedek\Touche Holding - AI Ready Finans Yönetim Sistemi - YEDEK.xlsx` |
+| BACKUP | `TOUCHE_BACKUP_WORKBOOK` → `config.BACKUP_WORKBOOK_PATH` | next to MAIN: `…\Desktop\Touche\Touche Holding - AI Ready Finans Yönetim Sistemi_backup.xlsx` |
 
 Nothing else at runtime reads or writes an Excel workbook (`TekYazmaHattiStatikTestleri`). The old Gürsar workbook
 path (`config.LEGACY_GURSAR_EXCEL`) is referenced only by the inventory tool and is never opened at runtime.
@@ -45,7 +45,10 @@ py -3.12 scripts\excel_operasyon.py temizle       # LISTS provably redundant gen
 py -3.12 scripts\excel_operasyon.py temizle --sil --onay SIL   # only after you have read the list
 ```
 
-`envanter` records, for each Touche-related workbook (path, size, modified time, SHA-256, sheets, role) and decides:
+`envanter` records, for each Touche-related workbook or CSV (path, size, modified time, SHA-256, sheets, role, **class**) and decides.
+Classes: `CANONICAL_MAIN`, `CANONICAL_BACKUP`, `SAFE_TO_DELETE`, `TEMP`, `LEGACY_BACKUP` (pattern matches but coverage could not be
+proven → human decision), `OLD_MAIN`, `TEST`, `ARCHIVE`, `UNKNOWN`, `UNIQUE_DATA_REVIEW_REQUIRED`. Only `SAFE_TO_DELETE` and `TEMP` are deletable.
+Coverage proof for any non-identical file: readable, ledger sheet present, no filled sheet MAIN lacks, no `Kayit_ID` / `Kalem_ID` MAIN lacks.
 
 | Role | Meaning | Deletable? |
 |---|---|---|
@@ -54,6 +57,8 @@ py -3.12 scripts\excel_operasyon.py temizle --sil --onay SIL   # only after you 
 | `ESKI_URETILMIS_KOPYA` | matches a generated-copy pattern **and** has no `Kayit_ID` that MAIN lacks | yes |
 | `TEKIL_KAYIT_VAR(silinmez)` | contains records MAIN does not have | **never** — reconcile by hand first |
 | `OKUNAMADI/ESKI_FORMAT(silinmez)` | `.xls`, corrupt or unreadable | **never** |
+| `KAPSAMA_KANITLANAMADI(silinmez)` | no ledger sheet, extra filled sheet, or unknown work-item id — cannot prove MAIN covers it | **never** (reason is printed in the report) |
+| `CSV(silinmez)` | listed only | **never** |
 | `BELIRSIZ(silinmez)` | related by name but not a known generated pattern | **never** |
 
 Only files whose **name** contains Touche/Gürsar/Smart Excel markers, or that live in the system's own `firmalar\` /

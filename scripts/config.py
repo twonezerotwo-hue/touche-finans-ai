@@ -63,24 +63,31 @@ FAALIYET_REGISTRY = FIRMALAR_DIR / 'faaliyetler.json'
 # Tum calisma zamani Excel kodu bu iki yolu ana_excel_yolu()/yedek_excel_yolu()
 # uzerinden cozer. Testler TOUCHE_MAIN_WORKBOOK / TOUCHE_BACKUP_WORKBOOK ile
 # gecici dosyalara yonlendirir; uretim dosyasina dokunulmaz.
-_URETIM_ANA_EXCEL = Path(
-    r"C:\Users\twone\OneDrive\Desktop\Touche\Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx"
-)
 _ANA_EXCEL_ADI = "Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx"
+# Uretim (Windows) varsayilani kullanicinin OneDrive masaustundeki mevcut dosyadir; kullanici adi kaynak
+# koda yazilmaz (Path.home()). Farkliysa TOUCHE_MAIN_WORKBOOK ile (ortam degiskeni veya .env) belirtilir.
+_URETIM_KLASORU = Path.home() / "OneDrive" / "Desktop" / "Touche"
+
+
+def varsayilan_yedek_yolu(ana) -> Path:
+    """Tek YEDEK Excel: ANA ile ayni klasorde, ``<ana adi>_backup.xlsx``."""
+    ana = Path(ana)
+    return ana.with_name(f"{ana.stem}_backup{ana.suffix}")
+
+
 MAIN_WORKBOOK_PATH = Path(
     os.environ.get("TOUCHE_MAIN_WORKBOOK")
-    or (_URETIM_ANA_EXCEL if os.name == "nt" else VERI_DIR / _ANA_EXCEL_ADI)
+    or (_URETIM_KLASORU / _ANA_EXCEL_ADI if os.name == "nt" else VERI_DIR / _ANA_EXCEL_ADI)
 )
 BACKUP_WORKBOOK_PATH = Path(
-    os.environ.get("TOUCHE_BACKUP_WORKBOOK")
-    or (BASE_DIR / "yedek" / f"{MAIN_WORKBOOK_PATH.stem} - YEDEK.xlsx")
+    os.environ.get("TOUCHE_BACKUP_WORKBOOK") or varsayilan_yedek_yolu(MAIN_WORKBOOK_PATH)
 )
 # Geriye uyumluluk: eski kod/testler MASTER_EXCEL adini kullanir. Yeni kod
 # ana_excel_yolu() kullanmalidir.
 MASTER_EXCEL = MAIN_WORKBOOK_PATH
 # Yalniz envanter/operasyon araclari icin: gecmiste kullanilan eski Gursar dosyasi.
 # Calisma zamaninda ASLA okunmaz veya yazilmaz.
-LEGACY_GURSAR_EXCEL = Path(r"C:\Users\twone\OneDrive\Desktop\Touche\Gürsar Touche\Gürsar Hesap .xlsx")
+LEGACY_GURSAR_EXCEL = _URETIM_KLASORU / "Gürsar Touche" / "Gürsar Hesap .xlsx"
 INVOICE2DATA_SABLON_DIR = BASE_DIR / "sablonlar" / "invoice2data"
 
 # 03_Kayit Merkezi'nde formul sablonunun hazir oldugu son satir. Bunun otesine
@@ -106,9 +113,7 @@ def ana_excel_ayarla(ana, yedek=None):
     """
     global MAIN_WORKBOOK_PATH, BACKUP_WORKBOOK_PATH, MASTER_EXCEL
     MAIN_WORKBOOK_PATH = Path(ana)
-    BACKUP_WORKBOOK_PATH = Path(yedek) if yedek else MAIN_WORKBOOK_PATH.with_name(
-        f"{MAIN_WORKBOOK_PATH.stem} - YEDEK.xlsx"
-    )
+    BACKUP_WORKBOOK_PATH = Path(yedek) if yedek else varsayilan_yedek_yolu(MAIN_WORKBOOK_PATH)
     MASTER_EXCEL = MAIN_WORKBOOK_PATH
     for firma in FIRMALAR.values():
         if "excel" in firma:

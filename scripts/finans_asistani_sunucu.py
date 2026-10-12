@@ -801,10 +801,25 @@ class Handler(BaseHTTPRequestHandler):
         log.info("%s - %s", self.address_string(), fmt % args)
 
 
+def baslangic_ozeti(host="127.0.0.1", port=8765) -> list[str]:
+    """Calisan surecin hangi kaynak agacini ve hangi tek ANA/YEDEK Excel'i kullandigini acikca yazar."""
+    from config import BASE_DIR, TEMP_DIR
+
+    return [
+        f"Touche Finans Asistani: http://{host}:{port}",
+        f"SMART_EXCEL_ROOT={BASE_DIR}",
+        f"SMART_EXCEL_MAIN_WORKBOOK={ana_excel_yolu()}",
+        f"SMART_EXCEL_BACKUP_WORKBOOK={yedek_excel_yolu()}",
+        f"SMART_EXCEL_TEMP_DIR={TEMP_DIR}",
+        f"SMART_EXCEL_CODE={Path(__file__).resolve().parent.parent}",
+    ]
+
+
 def calistir(host="127.0.0.1", port=None):
     port = int(port or os.environ.get("FINANS_UI_PORT", "8765"))
     sunucu = ThreadingHTTPServer((host, port), Handler)
-    print(f"Touche Finans Asistani: http://{host}:{port}", flush=True)
+    for satir in baslangic_ozeti(host, port):
+        print(satir, flush=True)
     try:
         sunucu.serve_forever()
     except KeyboardInterrupt:

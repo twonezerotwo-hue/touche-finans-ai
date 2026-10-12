@@ -32,15 +32,18 @@ LLM-assisted path, which is validator- and approval-gated.
 | File | Role | Path |
 |---|---|---|
 | **MAIN** workbook | the only live Smart Excel | `config.MAIN_WORKBOOK_PATH` (`TOUCHE_MAIN_WORKBOOK`; Windows default = the existing OneDrive workbook, unchanged) |
-| **BACKUP** workbook | the previous version, refreshed before every approved write | `config.BACKUP_WORKBOOK_PATH` (`TOUCHE_BACKUP_WORKBOOK`; default `<base>/yedek/<main stem> - YEDEK.xlsx`) |
+| **BACKUP** workbook | the previous version, refreshed before every approved write | `config.BACKUP_WORKBOOK_PATH` (`TOUCHE_BACKUP_WORKBOOK`; default: next to MAIN as `<main stem>_backup.xlsx`) |
 | audit history | one JSONL line per operation, hash-chained | `loglar/audit.jsonl` |
 | central ledger | double-entry mirror used for all metrics | `veri/finans.db` (SQLite) |
 | wizard state / approval queue | drafts | `loglar/cfo_taslaklari.json`, `loglar/ui_belge_kuyrugu.json` |
 | text index cache | JSON derived from MAIN by hash (not a workbook) | `veri/excel_index/` |
 
 There are no dated, per-transaction or folder backups, and no second source workbook. Temporary files
-(`.<name>.<32 hex>.tmp.xlsx`) exist only inside a write and are removed afterwards (leftovers are removed at the
-next write; only files matching that exact pattern next to MAIN/BACKUP are ever deleted).
+(`.<name>.<32 hex>.tmp.xlsx`) exist only inside a write, in the project temp area (`<base>/temp`, so nothing is dropped into
+the OneDrive folder; if temp is not on the same volume as the target — where `os.replace` could not be atomic — the
+target's own folder is used) and are removed afterwards. Leftovers are removed at the next write; only files matching that
+exact pattern in temp or next to MAIN/BACKUP are ever deleted. The server prints `SMART_EXCEL_ROOT`,
+`SMART_EXCEL_MAIN_WORKBOOK`, `SMART_EXCEL_BACKUP_WORKBOOK`, `SMART_EXCEL_TEMP_DIR`, `SMART_EXCEL_CODE` at startup.
 
 Environment variables: `TOUCHE_BASE_DIR`, `TOUCHE_MAIN_WORKBOOK`, `TOUCHE_BACKUP_WORKBOOK`,
 `TOUCHE_LEDGER_SON_SATIR` (template capacity, default 300), `TOUCHE_PAKET_KAYBI_IZNI=1` (explicitly allow dropping
@@ -56,9 +59,12 @@ re-entrant cross-process lock (`kayit_kilidi`: `fcntl` / `msvcrt`):
 2. The change is applied **in memory**; a rejected change (`basari=False`) leaves MAIN and BACKUP untouched.
 3. Saved to a temp file next to MAIN, re-opened and validated (sheets, formulas, existing values via a before/after
    snapshot diff, lost chart/image/pivot parts).
-4. BACKUP := current MAIN, copied to a temp file, hash-verified, atomically placed.
-5. MAIN hash re-checked — if Excel/OneDrive changed it meanwhile → abort (`ANA_DEGISTI`).
-6. Atomic `os.replace(temp, MAIN)`; a locked file maps to the actionable "Excel is open" message.
+4. **Before BACKUP is touched**: MAIN must be writable (an open Excel/OneDrive lock → `ANA_KILITLI`, actionable "close Excel"
+   message) and its hash must still be the one read in step 1 (`ANA_DEGISTI`). A refused attempt therefore never moves BACKUP,
+   so "undo the last transaction" (MAIN = V3, BACKUP = V2) stays possible.
+   Then BACKUP := current MAIN, copied to a temp file, hash-verified, atomically placed.
+5. MAIN hash re-checked once more after the backup copy (race with Excel/OneDrive) → abort (`ANA_DEGISTI`).
+6. Atomic `os.replace(temp, MAIN)`; a lock that appears only now still maps to the "Excel is open" message.
 7. Placement verified by hash; then the extra step (the SQLite ledger) runs; if it fails MAIN is restored from BACKUP
    and the error is re-raised (draft stays retryable).
 8. Temp files removed; one audit event written (also for rejections and errors).
@@ -68,7 +74,8 @@ all identity columns are empty and no target cell holds a formula; formula-looki
 
 **Restore** = swap MAIN↔BACKUP (`yedekten_geri_don`), requires the word `GERI-DON`, actor and reason, and is reachable
 **only** from `scripts/excel_operasyon.py geri-don`. The HTTP server, Telegram bot, UI and AI modules never call it
-(static test). `harici_dosyayi_ana_yap` places an externally edited, validated workbook as the new MAIN (BACKUP = previous MAIN).
+(static test). If the very last restore step fails, the previous MAIN is kept as `KURTARMA_<backup name>.xlsx` (a name the temp cleanup never matches) and the error says where.
+`harici_dosyayi_ana_yap` places an externally edited, validated workbook as the new MAIN (BACKUP = previous MAIN).
 
 ### Audit event (`excel_islem`)
 `islem_id` (operation id), `aktor`, `kaynak`, `durum` (`BASARILI`, `REDDEDILDI`, `HATA_GERI_ALINDI`, …), `hata`/`hata_kodu`,

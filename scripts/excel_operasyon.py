@@ -92,6 +92,73 @@ def _kayit_kimlikleri(yol: Path) -> set[str]:
         wb.close()
 
 
+KALEM_SAYFASI = "06_Proje İş Kalemleri"
+
+
+def _kolon_degerleri(yol: Path, sayfa: str, sutun_idx: int, ilk: int) -> set[str]:
+    from openpyxl import load_workbook
+
+    try:
+        wb = load_workbook(yol, read_only=True, data_only=True)
+    except Exception:
+        return set()
+    try:
+        if sayfa not in wb.sheetnames:
+            return set()
+        sonuc = set()
+        for satir in wb[sayfa].iter_rows(min_row=ilk, values_only=True):
+            if len(satir) > sutun_idx and satir[sutun_idx] not in (None, ""):
+                sonuc.add(str(satir[sutun_idx]).strip())
+        return sonuc
+    finally:
+        wb.close()
+
+
+def _dolu_sayfalar(yol: Path) -> dict[str, bool] | None:
+    """{sayfa: icinde veri var mi}; dosya okunamazsa None."""
+    from openpyxl import load_workbook
+
+    try:
+        wb = load_workbook(yol, read_only=True, data_only=False)
+    except Exception:
+        return None
+    try:
+        sonuc = {}
+        for ws in wb.worksheets:
+            dolu = False
+            for satir in ws.iter_rows(max_row=400, values_only=True):
+                if any(v not in (None, "") for v in satir):
+                    dolu = True
+                    break
+            sonuc[ws.title] = dolu
+        return sonuc
+    finally:
+        wb.close()
+
+
+def kapsama_sorunlari(yol: Path, ana_sayfalar: set[str], ana_kalem_idleri: set[str]) -> dict:
+    """Aday dosyanin ANA tarafindan KAPSANDIGINI kanitlamak icin gereken kontroller.
+
+    * ledger sayfasi (03_Kayit Merkezi) olmali; aksi halde Kayit_ID karsilastirmasi anlamsiz kalir
+    * ANA'da bulunmayan, icinde veri olan sayfa olmamali
+    * ANA'da olmayan is kalemi kimligi (06_Proje Is Kalemleri, A sutunu) olmamali
+    Her sorun silmeyi ENGELLER (kanit yok -> silinmez).
+    """
+    sorunlar = []
+    ledger = config.FIRMALAR["touche_holding"]["ana_ledger"]["sayfa"]
+    dolu = _dolu_sayfalar(yol)
+    if dolu is None:
+        return {"sorunlar": ["dosya okunamadi"], "tekil_kalem": []}
+    if ledger not in dolu:
+        sorunlar.append(f"'{ledger}' sayfasi yok (kimlik karsilastirmasi yapilamaz)")
+    sorunlar += [f"ANA'da olmayan dolu sayfa: {ad}" for ad, v in dolu.items() if v and ad not in ana_sayfalar]
+    kalemler = _kolon_degerleri(yol, KALEM_SAYFASI, 0, 6)
+    tekil_kalem = sorted(kalemler - ana_kalem_idleri)
+    if tekil_kalem:
+        sorunlar.append(f"ANA'da olmayan is kalemi kimligi: {', '.join(tekil_kalem[:5])}")
+    return {"sorunlar": sorunlar, "tekil_kalem": tekil_kalem}
+
+
 def _ilgili_mi(yol: Path) -> bool:
     """Dosya Touche Smart Excel ile ilgili mi? Yalniz DOSYA ADINA veya bu sistemin kendi
     urettigi klasorlere (firmalar/, arsiv/) bakilir; ust klasor adi yeterli sayilmaz.
@@ -127,13 +194,15 @@ def tara(kokler) -> list[dict]:
     ana, yedek = config.ana_excel_yolu().resolve(), config.yedek_excel_yolu().resolve()
     ana_idleri = _kayit_kimlikleri(ana) if ana.exists() else set()
     ana_hash = _hash(ana) if ana.exists() else None
+    ana_sayfalar = set(_sayfalar(ana) or []) if ana.exists() else set()
+    ana_kalem_idleri = _kolon_degerleri(ana, KALEM_SAYFASI, 0, 6) if ana.exists() else set()
     bulunanlar, gorulen = [], set()
     for kok in kokler:
         for dizin, alt, dosyalar in os.walk(kok):
             alt[:] = [a for a in alt if a not in {".git", "node_modules", "__pycache__", ".venv", "venv"}]
             for ad in dosyalar:
                 yol = Path(dizin) / ad
-                if yol.suffix.lower() not in {".xlsx", ".xlsm", ".xls"}:
+                if yol.suffix.lower() not in {".xlsx", ".xlsm", ".xls", ".csv"}:
                     continue
                 gercek = yol.resolve()
                 if gercek in gorulen:
@@ -143,8 +212,11 @@ def tara(kokler) -> list[dict]:
                     continue
                 bilgi = {"yol": gercek, "boyut": yol.stat().st_size,
                          "degisim": datetime.fromtimestamp(yol.stat().st_mtime).isoformat(timespec="seconds"),
-                         "sha256": _hash(yol), "sayfalar": _sayfalar(yol) if yol.suffix.lower() != ".xls" else None}
-                if gercek == ana:
+                         "sha256": _hash(yol),
+                         "sayfalar": _sayfalar(yol) if yol.suffix.lower() in {".xlsx", ".xlsm"} else None}
+                if yol.suffix.lower() == ".csv":
+                    bilgi.update(rol="CSV(silinmez)", tekil_kayit=[], uretilmis_kopya=False)   # yalniz listelenir
+                elif gercek == ana:
                     bilgi["rol"] = "MAIN"
                 elif gercek == yedek:
                     bilgi["rol"] = "BACKUP"
@@ -153,14 +225,21 @@ def tara(kokler) -> list[dict]:
                     bilgi["tekil_kayit"] = sorted(ids - ana_idleri)
                     bilgi["ana_ile_ayni"] = bilgi["sha256"] == ana_hash
                     bilgi["uretilmis_kopya"] = _uretilmis_kopya_mi(yol, config.BASE_DIR)
+                    bilgi["kapsama_sorunlari"] = []
+                    if yol.suffix.lower() == ".xlsx" and not bilgi["ana_ile_ayni"] and bilgi["sayfalar"] is not None:
+                        k = kapsama_sorunlari(yol, ana_sayfalar, ana_kalem_idleri)
+                        bilgi["kapsama_sorunlari"] = k["sorunlar"]
+                        bilgi["tekil_kalem"] = k["tekil_kalem"]
                     if bilgi["ana_ile_ayni"]:
                         bilgi["rol"] = "KOPYA(ANA ile birebir ayni)"
                     elif bilgi["tekil_kayit"]:
                         bilgi["rol"] = "TEKIL_KAYIT_VAR(silinmez)"
-                    elif bilgi["uretilmis_kopya"]:
-                        bilgi["rol"] = "ESKI_URETILMIS_KOPYA"
                     elif yol.suffix.lower() == ".xls" or bilgi["sayfalar"] is None:
                         bilgi["rol"] = "OKUNAMADI/ESKI_FORMAT(silinmez)"
+                    elif bilgi["kapsama_sorunlari"]:
+                        bilgi["rol"] = "KAPSAMA_KANITLANAMADI(silinmez)"
+                    elif bilgi["uretilmis_kopya"]:
+                        bilgi["rol"] = "ESKI_URETILMIS_KOPYA"
                     else:
                         bilgi["rol"] = "BELIRSIZ(silinmez)"
                 bulunanlar.append(bilgi)
@@ -168,21 +247,58 @@ def tara(kokler) -> list[dict]:
 
 
 def silinebilir(b: dict) -> bool:
-    """Yalniz kanitlanmis, bu sistemin urettigi artik kopyalar silinebilir."""
+    """Yalniz kanitlanmis, bu sistemin urettigi artik kopyalar silinebilir.
+
+    Kanit: (a) dosya adi/klasoru sistemin urettigi kopya kaliplarindan biri, VE
+    (b) ANA ile birebir ayni ya da icindeki hicbir kayit/kalem kimligi ANA'da eksik degil, ledger sayfasi okunabilir
+    ve ANA'da olmayan dolu sayfa yok. Okunamayan veya kapsami kanitlanamayan dosya ASLA silinebilir degildir."""
     return bool(b.get("rol") in {"ESKI_URETILMIS_KOPYA", "KOPYA(ANA ile birebir ayni)"}
-                and b.get("uretilmis_kopya") and not b.get("tekil_kayit"))
+                and b.get("uretilmis_kopya") and not b.get("tekil_kayit")
+                and not b.get("kapsama_sorunlari") and not b.get("tekil_kalem"))
+
+
+def siniflandir(b: dict) -> str:
+    """Operasyon raporu icin sade sinif: CANONICAL_MAIN, CANONICAL_BACKUP, LEGACY_BACKUP, OLD_MAIN, TEMP, TEST,
+    ARCHIVE, UNKNOWN, UNIQUE_DATA_REVIEW_REQUIRED, SAFE_TO_DELETE. SAFE_TO_DELETE/TEMP/LEGACY_BACKUP + 'silinebilir' = silinebilir."""
+    rol = b.get("rol", "")
+    if rol == "MAIN":
+        return "CANONICAL_MAIN"
+    if rol == "BACKUP":
+        return "CANONICAL_BACKUP"
+    yol = Path(b["yol"])
+    ad = yol.name.lower()
+    if b.get("tekil_kayit") or b.get("tekil_kalem"):
+        return "UNIQUE_DATA_REVIEW_REQUIRED"
+    if ad.startswith(".") and ".tmp" in ad:
+        return "TEMP"
+    if silinebilir(b):
+        return "SAFE_TO_DELETE"
+    try:
+        if yol.resolve() == config.LEGACY_GURSAR_EXCEL.resolve():
+            return "OLD_MAIN"
+    except OSError:
+        pass
+    parcalar = {p.lower() for p in yol.parts}
+    if rol.startswith("CSV") and ({"arsiv", "muhasebe_export"} & parcalar):
+        return "ARCHIVE"
+    if "test" in ad:
+        return "TEST"
+    if b.get("uretilmis_kopya"):
+        return "LEGACY_BACKUP"            # kalibi uyuyor ama kapsami kanitlanamadi / okunamadi -> insan karari
+    return "UNKNOWN"
 
 
 def rapor_yaz(bulunanlar, hedef: Path):
     s = ["# EXCEL_FILE_INVENTORY", "",
          f"Üretim zamanı: {datetime.now().isoformat(timespec='seconds')}  ",
          f"MAIN: `{config.ana_excel_yolu()}`  ", f"BACKUP: `{config.yedek_excel_yolu()}`", "",
-         "| # | Rol | Yol | Boyut | Değişim | SHA-256 | Sayfa | ANA'da olmayan kayıt | Silinebilir |",
-         "|---|-----|-----|------:|---------|---------|------:|---------------------:|:-----------:|"]
+         "| # | Sınıf | Rol | Yol | Boyut | Değişim | SHA-256 | Sayfa | ANA'da olmayan kayıt/kalem | Silinebilir | Neden silinmez |",
+         "|---|-------|-----|-----|------:|---------|---------|------:|---------------------:|:-----------:|----------------|"]
     for i, b in enumerate(bulunanlar, 1):
-        s.append(f"| {i} | {b.get('rol')} | `{b['yol']}` | {b['boyut']:,} | {b['degisim']} | "
+        neden = "; ".join(b.get("kapsama_sorunlari") or []) or "-"
+        s.append(f"| {i} | {siniflandir(b)} | {b.get('rol')} | `{b['yol']}` | {b['boyut']:,} | {b['degisim']} | "
                  f"`{b['sha256'][:16]}…` | {len(b['sayfalar']) if b['sayfalar'] else '-'} | "
-                 f"{len(b.get('tekil_kayit', []))} | {'EVET' if silinebilir(b) else 'hayır'} |")
+                 f"{len(b.get('tekil_kayit', [])) + len(b.get('tekil_kalem', []))} | {'EVET' if silinebilir(b) else 'hayır'} | {neden} |")
     sil = [b for b in bulunanlar if silinebilir(b)]
     s += ["", f"Toplam {len(bulunanlar)} ilgili dosya; silinebilir (kanıtlı) {len(sil)}.", "",
           "Kural: yalnız bu sistemin ürettiği (yedek/kurulum/tarihli/geçici) VE ANA'da bulunmayan kaydı "
@@ -270,7 +386,7 @@ def main(argv=None):
         rapor_yaz(bulunanlar, Path(a.rapor))
         print(f"{len(bulunanlar)} ilgili dosya bulundu; rapor: {a.rapor}")
         for b in bulunanlar:
-            print(f"  [{b.get('rol')}] {b['yol']}")
+            print(f"  [{siniflandir(b)}] [{b.get('rol')}] {b['yol']}")
         if a.komut == "envanter":
             return 0
         silinecek = [b for b in bulunanlar if silinebilir(b)]

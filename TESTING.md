@@ -10,7 +10,7 @@ python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_
 ```
 Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests` also works for the non-browser tests.
 
-Result at the time of writing: **278 passed, 1 skipped** (the skip needs a copy of a production DB, see below).
+Result at the time of writing: **296 passed, 1 skipped** (the skip needs a copy of a production DB, see below).
 Baseline on the original commit: 6 modules failed at import; with that worked around, 126 passed / 21 failed.
 
 ## Production data is never touched
@@ -41,6 +41,15 @@ Baseline on the original commit: 6 modules failed at import; with that worked ar
 | `test_cfo_http.py` | the same flows over real HTTP (wizard, password approval, queries, navigation data endpoints, RBAC scope, other users' drafts, Excel status) |
 | `test_ui_tarayici.py` | real Chromium (Playwright): Holding → Gürsar Mimarlık → Göktürk Okulu navigation, back button, deep link after reload, breadcrumb, wizard chips, the 10-step end-to-end scenario, and **no console/CSP error** on any page. Skipped automatically when Playwright/Chromium is missing |
 | existing suites | legacy behaviour (documents, Telegram flows, FX, RBAC, project work items, …) migrated to the isolated environment |
+
+## Windows / OneDrive validation (run on the real machine)
+
+`py -3.12 scripts\windows_dogrulama.py [--onedrive-klasoru "%USERPROFILE%\OneDrive\Desktop\Touche"]` runs the
+scenarios against **TEST workbooks only** (it creates and removes its own folders, hashes the production MAIN/BACKUP before
+and after, and fails if they changed): closed-Excel write, V1→V2→V3 with BACKUP always one version behind, only MAIN+BACKUP on
+disk, no leftover temp files (also not in the OneDrive folder), failure recovery, **Excel-open lock (real Win32 share-mode
+lock, Windows only; SKIP elsewhere)** with BACKUP not advancing, retry after Excel is closed, restore = swap, and the audit
+trail. Exit code 0 only when everything is PASS. `tests/test_windows_dogrulama.py` runs the tool in CI.
 
 ## Browser tests
 

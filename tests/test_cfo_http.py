@@ -213,6 +213,15 @@ class CfoHttpTestleri(CfoTestTemeli):
         st, hata = self.req("POST", "/api/cfo/adim", {"taslak_id": tid, "alan": "faaliyet", "secim": "gursar_mimarlik"}, "b@x")
         self.assertEqual(st, 403)
 
+    def test_baslangic_ozeti_tek_ana_yedek_ve_kaynak_agacini_yazar(self):
+        satirlar = self.srv.baslangic_ozeti("127.0.0.1", 8765)
+        metin = "\n".join(satirlar)
+        self.assertIn("http://127.0.0.1:8765", metin)
+        self.assertIn(f"SMART_EXCEL_MAIN_WORKBOOK={self.ana}", metin)
+        self.assertIn(f"SMART_EXCEL_BACKUP_WORKBOOK={self.yedek}", metin)
+        self.assertTrue(any(x.startswith("SMART_EXCEL_ROOT=") for x in satirlar))
+        self.assertTrue(any(x.startswith("SMART_EXCEL_CODE=") for x in satirlar))
+
     def test_http_excel_durum_yedek_ve_ana(self):
         self.gecmis_odeme_yaz()
         st, d = self.req("GET", "/api/excel/durum")

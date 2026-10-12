@@ -52,8 +52,8 @@ Telegram bot anahtarı kaynak koda yazılmaz; Windows ortam değişkeni veya kul
 
 | Ortam değişkeni | Anlamı | Varsayılan |
 |---|---|---|
-| `TOUCHE_MAIN_WORKBOOK` | ANA Smart Excel | Windows: mevcut OneDrive dosyası (adı değişmedi); diğer: `veri/…xlsx` |
-| `TOUCHE_BACKUP_WORKBOOK` | tek YEDEK Excel | `<base>/yedek/<ana adı> - YEDEK.xlsx` |
+| `TOUCHE_MAIN_WORKBOOK` | ANA Smart Excel | Windows: `%USERPROFILE%\OneDrive\Desktop\Touche\Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx` (mevcut dosya, adı değişmedi); diğer: `veri/…xlsx` |
+| `TOUCHE_BACKUP_WORKBOOK` | tek YEDEK Excel | ANA ile aynı klasörde `<ana adı>_backup.xlsx` |
 | `TOUCHE_BASE_DIR` | çalışma klasörü (log, veri, geçici) | Windows: `C:\ai-excel`; diğer: depo klasörü |
 | `TOUCHE_LEDGER_SON_SATIR` | `03_Kayıt Merkezi` formül şablonunun son satırı | `300` |
 | `TOUCHE_PAKET_KAYBI_IZNI=1` | Excel'deki grafik/resim kaybına bilerek izin ver | kapalı |
@@ -63,6 +63,8 @@ Telegram bot anahtarı kaynak koda yazılmaz; Windows ortam değişkeni veya kul
 * Çalışma zamanında yalnız **ANA** ve **YEDEK** Excel vardır. Her onaylı yazmada: doğrula → YEDEK'i mevcut ANA ile yenile ve
   hash'le doğrula → bellekte değiştir → geçici dosyaya kaydet, yeniden aç ve doğrula → atomik değiştir → geçici dosyayı sil → denetim kaydı.
   Sonuç: ANA = V11, YEDEK = V10. Tarihli/işlem başı yedek, yedek klasörü yoktur. Ayrıntı: [ARCHITECTURE.md](ARCHITECTURE.md).
+* Geçici Excel dosyaları yalnız yazma sırasında, projenin `temp` klasöründe (`<base>\temp`) oluşur ve hemen silinir; OneDrive klasörüne geçici dosya
+  düşmez (temp, ANA ile aynı diskte değilse hedefin klasörü kullanılır). Başlangıçta `SMART_EXCEL_ROOT / _MAIN_WORKBOOK / _BACKUP_WORKBOOK` satırları yazılır.
 * Geri dönüş yalnız insan/operasyon eylemidir (ANA ile YEDEK'i **takas** eder); yapay zeka, web arayüzü veya Telegram geri dönemez:
   `py -3.12 scripts\excel_operasyon.py geri-don --neden "…" --onay GERI-DON`
 * Operasyon aracı: `durum`, `dogrula`, `mutabakat` (Excel ↔ merkez defter farkı, salt-okunur), `defteri-aktar`, `envanter`,

@@ -74,7 +74,7 @@ class EnvanterTemizlikTestleri(unittest.TestCase):
         self.assertEqual(roller["Touche Holding Smart.xlsx"], "MAIN")
         self.assertEqual(roller["Touche Holding Smart - YEDEK.xlsx"], "BACKUP")
         self.assertTrue(roller["Touche Holding Smart_20250101_000000.xlsx"].startswith("TEKIL_KAYIT_VAR"))
-        self.assertTrue(roller["Touche notlarim.xlsx"].startswith("BELIRSIZ"))
+        self.assertTrue(roller["Touche notlarim.xlsx"].startswith(("BELIRSIZ", "KAPSAMA_KANITLANAMADI")))
         self.assertNotIn("Maas hesabi.xlsx", roller)             # ilgisiz dosya envantere girmez
 
     def test_yalniz_kanitli_artik_kopyalar_silinebilir(self):
@@ -99,6 +99,81 @@ class EnvanterTemizlikTestleri(unittest.TestCase):
         for korunan in (self.ana, self.yedek, self.tekil, self.elle, self.ilgisiz):
             self.assertTrue(korunan.exists(), korunan)
         self.assertIn("MAIN", rapor.read_text(encoding="utf-8"))
+
+    # --- kanit esigi: kapsami kanitlanamayan dosya, adi kalibina uysa bile ASLA silinmez ---
+    def _desenli(self, ad="Touche Holding Smart_20250202_000000.xlsx"):
+        yol = self.base / "firmalar" / "touche_holding" / "yedek" / ad
+        yol.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.ana, yol)
+        return yol
+
+    def _bul(self, yol):
+        return next(b for b in self._tara() if Path(b["yol"]) == yol.resolve())
+
+    def test_bozuk_dosya_kalibina_uysa_da_silinemez(self):
+        yol = self._desenli()
+        yol.write_bytes(b"bozuk xlsx")
+        b = self._bul(yol)
+        self.assertFalse(op.silinebilir(b))
+        self.assertTrue(b["rol"].startswith("OKUNAMADI"))
+
+    def test_ledger_sayfasi_olmayan_eski_dosya_silinemez(self):
+        """Eski faaliyet-basina dosyalar farkli sema kullanabilir: kimlik karsilastirmasi yapilamaz -> silinmez."""
+        yol = self._desenli("Gursar_hesap.xlsx")
+        wb = Workbook()
+        wb.active.title = "Ödeme Geçmişi"
+        wb.active["A6"] = "ESKI ODEME"
+        wb.save(yol)
+        wb.close()
+        b = self._bul(yol)
+        self.assertFalse(op.silinebilir(b))
+        self.assertTrue(b["rol"].startswith("KAPSAMA_KANITLANAMADI"))
+        self.assertTrue(any("03_Kayıt Merkezi" in x for x in b["kapsama_sorunlari"]))
+
+    def test_anada_olmayan_dolu_sayfa_silmeyi_engeller(self):
+        yol = self._desenli()
+        wb = load_workbook(yol)
+        wb.create_sheet("Eski Notlar")["A1"] = "onemli not"
+        wb.save(yol)
+        wb.close()
+        b = self._bul(yol)
+        self.assertFalse(op.silinebilir(b))
+        self.assertTrue(any("Eski Notlar" in x for x in b["kapsama_sorunlari"]))
+
+    def test_anada_olmayan_is_kalemi_kimligi_silmeyi_engeller(self):
+        yol = self._desenli()
+        wb = load_workbook(yol)
+        wb["06_Proje İş Kalemleri"]["A20"] = "KLM-ESKI-999"
+        wb.save(yol)
+        wb.close()
+        b = self._bul(yol)
+        self.assertFalse(op.silinebilir(b))
+        self.assertEqual(b["tekil_kalem"], ["KLM-ESKI-999"])
+        self.assertEqual(op.siniflandir(b), "UNIQUE_DATA_REVIEW_REQUIRED")
+
+    def test_ana_ile_ayni_icerikli_desenli_kopya_silinebilir_ve_sinifi_dogru(self):
+        yol = self._desenli()
+        b = self._bul(yol)
+        self.assertTrue(op.silinebilir(b))
+        self.assertEqual(op.siniflandir(b), "SAFE_TO_DELETE")
+
+    def test_sinif_adlari(self):
+        siniflar = {Path(b["yol"]).name: op.siniflandir(b) for b in self._tara()}
+        self.assertEqual(siniflar["Touche Holding Smart.xlsx"], "CANONICAL_MAIN")
+        self.assertEqual(siniflar["Touche Holding Smart - YEDEK.xlsx"], "CANONICAL_BACKUP")
+        self.assertEqual(siniflar["Touche Holding Smart_20250101_000000.xlsx"], "UNIQUE_DATA_REVIEW_REQUIRED")
+        self.assertEqual(siniflar["Touche notlarim.xlsx"], "UNKNOWN")
+        self.assertEqual(siniflar["Touche Holding Smart_20260100_120000.xlsx"], "SAFE_TO_DELETE")
+
+    def test_gecici_dosya_temp_sinifinda_ve_csv_yalniz_listelenir(self):
+        temp = self.root / "Desktop" / "Touche" / f".Touche Holding Smart.{'b' * 32}.tmp.xlsx"
+        shutil.copy2(self.ana, temp)
+        csv = self.base / "arsiv" / "Touche banka hareketleri.csv"
+        csv.parent.mkdir(parents=True, exist_ok=True)
+        csv.write_text("Tarih;Tutar\n2026-01-01;1\n", encoding="utf-8")
+        siniflar = {Path(b["yol"]).name: (op.siniflandir(b), op.silinebilir(b)) for b in self._tara()}
+        self.assertEqual(siniflar[temp.name][0], "TEMP")
+        self.assertEqual(siniflar["Touche banka hareketleri.csv"], ("ARCHIVE", False))     # csv asla silinmez
 
     def test_durum_ve_dogrula(self):
         self.assertEqual(op.main(["durum"]), 0)

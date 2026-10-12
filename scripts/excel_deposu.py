@@ -84,10 +84,37 @@ def sha256(yol) -> str:
     return h.hexdigest()
 
 
-def _gecici_yol(hedef: Path) -> Path:
-    """Hedefle ayni klasorde (ayni disk) gecici dosya adi; os.replace atomik kalir."""
+def _ayni_birim(a: Path, b: Path) -> bool:
+    try:
+        return os.stat(a).st_dev == os.stat(b).st_dev
+    except OSError:
+        return False
+
+
+def _gecici_klasor(hedef: Path) -> Path:
+    """Gecici Excel dosyalari projenin temp alaninda (``config.TEMP_DIR``) tutulur; boylece OneDrive/Masaustu
+    klasorune gecici dosya dusmez. ``os.replace`` yalniz ayni diskte/birimde atomik calistigindan, temp alani
+    hedefle ayni birimde degilse hedefin kendi klasoru kullanilir."""
     hedef = Path(hedef)
-    return hedef.parent / f".{hedef.stem}.{uuid.uuid4().hex}.tmp{hedef.suffix}"
+    temp = Path(config.TEMP_DIR)
+    try:
+        temp.mkdir(parents=True, exist_ok=True)
+        hedef.parent.mkdir(parents=True, exist_ok=True)
+        if _ayni_birim(temp, hedef.parent):
+            return temp
+    except OSError:
+        pass
+    return hedef.parent
+
+
+def _gecici_yol(hedef: Path) -> Path:
+    """``.<hedef adi>.<32 hex>.tmp.xlsx`` (uzanti hedefinki); yalniz yazma sirasinda var olur."""
+    hedef = Path(hedef)
+    return _gecici_klasor(hedef) / f".{hedef.stem}.{uuid.uuid4().hex}.tmp{hedef.suffix}"
+
+
+def _gecici_arama_klasorleri() -> set[Path]:
+    return {config.ana_excel_yolu().parent, config.yedek_excel_yolu().parent, Path(config.TEMP_DIR)}
 
 
 def _sil(yol):
@@ -99,7 +126,7 @@ def _sil(yol):
 
 
 def gecici_kalintilari_temizle() -> list[str]:
-    """Bu sistemin biraktigi gecici dosyalari siler (ANA ve YEDEK klasorlerinde).
+    """Bu sistemin biraktigi gecici dosyalari siler (proje temp alani ile ANA/YEDEK klasorleri).
 
     Yalnizca ``.<ana veya yedek adi>.<32 hex>.tmp.xlsx`` desenine uyanlar silinir;
     baska hicbir dosyaya dokunulmaz. Yazma kilidi altinda cagrildiginda canli bir
@@ -107,8 +134,7 @@ def gecici_kalintilari_temizle() -> list[str]:
     """
     silinen = []
     adlar = {config.ana_excel_yolu().stem, config.yedek_excel_yolu().stem}
-    klasorler = {config.ana_excel_yolu().parent, config.yedek_excel_yolu().parent}
-    for klasor in klasorler:
+    for klasor in _gecici_arama_klasorleri():
         if not klasor.exists():
             continue
         for dosya in klasor.iterdir():
@@ -123,7 +149,7 @@ def gecici_dosyalar() -> list[str]:
     """Kalinti gecici dosyalarin listesi (silmeden)."""
     sonuc = []
     adlar = {config.ana_excel_yolu().stem, config.yedek_excel_yolu().stem}
-    for klasor in {config.ana_excel_yolu().parent, config.yedek_excel_yolu().parent}:
+    for klasor in _gecici_arama_klasorleri():
         if klasor.exists():
             for dosya in klasor.iterdir():
                 eslesme = _GECICI_RE.match(dosya.name)
@@ -277,6 +303,22 @@ def _kullanici_mesaji(exc: Exception) -> str | None:
     return None
 
 
+def _ana_yazilabilir_mi(ana: Path) -> None:
+    """Excel dosyayi acik tutuyorsa (Windows paylasim kilidi) ya da OneDrive kilitlediyse yazma daha baslamadan reddedilir."""
+    try:
+        with open(ana, "r+b"):
+            pass
+    except PermissionError as exc:
+        raise DepoHatasi("ANA_KILITLI", _kullanici_mesaji(exc) or str(exc)) from exc
+
+
+def _ana_ayni_mi(ana: Path, beklenen_hash: str) -> None:
+    if sha256(ana) != beklenen_hash:
+        raise DepoHatasi(
+            "ANA_DEGISTI", "Ana Excel işlem sırasında dışarıdan değişti (Excel/OneDrive). "
+            "Kayıt yapılmadı; taslağı tekrar onaylayın.")
+
+
 # ---------------------------------------------------------------------------
 # Yedek yenileme / durum
 # ---------------------------------------------------------------------------
@@ -411,12 +453,14 @@ def guvenli_degistir(degistirici, *, islem_id: str | None = None, aktor: str = "
                 sonuc = dict(sonuc, islem_id=islem_id, degisiklik_yapildi=False, kuru_calistirma=True)
                 return sonuc
 
-            yedek_hash = yedegi_yenile()               # 4) YEDEK = mevcut ANA
+            # 4) YEDEK'e dokunmadan ONCE reddedilebilecek durumlar: Excel/OneDrive dosyayi kilitlediyse ya da ANA
+            #    disaridan degistiyse islem iptal edilir; boylece basarisiz bir deneme "son islemi geri alma"
+            #    imkanini (YEDEK = onceki surum) bozmaz.
+            _ana_yazilabilir_mi(ana)
+            _ana_ayni_mi(ana, ana_hash_once)
+            yedek_hash = yedegi_yenile()               # YEDEK = mevcut ANA
             olay["yedek_hash"] = yedek_hash
-            if sha256(ana) != ana_hash_once:           # 5) disaridan degisim?
-                raise DepoHatasi(
-                    "ANA_DEGISTI", "Ana Excel işlem sırasında dışarıdan değişti (Excel/OneDrive). "
-                    "Kayıt yapılmadı; taslağı tekrar onaylayın.")
+            _ana_ayni_mi(ana, ana_hash_once)           # 5) yedekleme sirasinda disaridan degisim?
             yeni_hash = sha256(gecici)
             try:
                 os.replace(gecici, ana)                # 6) atomik yerlestirme
@@ -522,11 +566,18 @@ def yedekten_geri_don(*, aktor: str, neden: str, onay: str) -> dict:
             if sha256(ana) != h_yedek:
                 raise DepoHatasi("YERLESTIRME_DOGRULAMA", "Geri dönüş sonrası ana dosya doğrulanamadı.")
             if t_ana is not None:
+                onceki_ana = t_ana                      # YEDEK'e gidecek (onceki ANA surumu)
                 try:
-                    os.replace(t_ana, yedek)
+                    os.replace(onceki_ana, yedek)
                     t_ana = None
                 except OSError as exc:  # ANA artik eski surum; yeni surumu kaybetme
-                    olay["kurtarma_dosyasi"] = str(t_ana)
+                    # Gecici-dosya adi bir sonraki yazmada temizlenirdi: kalici, desene uymayan bir ada tasi.
+                    kurtarma = onceki_ana.with_name(f"KURTARMA_{yedek.stem}{yedek.suffix}")
+                    try:
+                        os.replace(onceki_ana, kurtarma)
+                    except OSError:
+                        kurtarma = onceki_ana
+                    olay["kurtarma_dosyasi"] = str(kurtarma)
                     t_ana = None
                     raise DepoHatasi(
                         "YEDEK_YERLESTIRILEMEDI",
