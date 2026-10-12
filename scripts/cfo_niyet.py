@@ -142,15 +142,16 @@ def tarih_cikar(metin, bugun: date | None = None):
                 return None, m.span(), f"Geçersiz tarih: {m.group(0)}"
     m = _AY_TARIH_RE.search(norm(ham))
     if m:
-        g, ay_adi, yil = m.groups()
-        yil_i = int(yil) if yil else bugun.year
+        gun_metni, ay_adi, yil_metni = m.groups()
+        g = int(gun_metni)
+        yil_i = int(yil_metni) if yil_metni else bugun.year
         try:
-            sonuc = date(yil_i, AYLAR[ay_adi], int(g))
+            sonuc = date(yil_i, AYLAR[ay_adi], g)
         except ValueError:
             return None, None, f"Geçersiz tarih: {m.group(0)}"
-        if not yil and sonuc > bugun:
+        if not yil_metni and sonuc > bugun:
             try:
-                sonuc = date(yil_i - 1, AYLAR[ay_adi], int(g))
+                sonuc = date(yil_i - 1, AYLAR[ay_adi], g)
             except ValueError:
                 return None, None, f"Geçersiz tarih: {m.group(0)}"
         return sonuc, None, ""

@@ -20,6 +20,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import config
 import cfo_niyet as N
@@ -687,7 +688,7 @@ def hazirla(t, katalog: Katalog) -> dict:
     firma_key = t["faaliyet"]
     md = master_data_oku(firma_key)
     kayit = kayit_olustur(t, katalog)
-    veri = {"_hedef": "ana_ledger", "kayitlar": [kayit], "uyarilar": [], "riskler": []}
+    veri: dict[str, Any] = {"_hedef": "ana_ledger", "kayitlar": [kayit], "uyarilar": [], "riskler": []}
     dogrulama = deterministik_dogrula(veri, firma_key, "sohbet_kaydi", md=md)
     if dogrulama["durum"] == FAIL:
         return {"hata": "; ".join(dogrulama["hatalar"][:3])}

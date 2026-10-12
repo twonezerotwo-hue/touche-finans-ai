@@ -34,6 +34,7 @@ import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from openpyxl import load_workbook
 
@@ -226,7 +227,8 @@ def anlik_goruntu(wb) -> dict:
 
 
 def _sutun_harfi(koordinat: str) -> str:
-    return re.match(r"[A-Z]+", koordinat).group(0)
+    m = re.match(r"[A-Z]+", koordinat)
+    return m.group(0) if m else ""
 
 
 def goruntu_karsilastir(once: dict, sonra: dict, *, degisim_izni=None, formul_degisim_izni=False,
@@ -342,7 +344,7 @@ def guvenli_degistir(degistirici, *, islem_id: str | None = None, aktor: str = "
     islem_id = islem_id or f"OP-{datetime.now():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"
     baslangic = time.monotonic()
     ana, yedek = config.ana_excel_yolu(), config.yedek_excel_yolu()
-    olay = {"islem_id": islem_id, "aktor": str(aktor), "kaynak": kaynak,
+    olay: dict[str, Any] = {"islem_id": islem_id, "aktor": str(aktor), "kaynak": kaynak,
             "ana": str(ana), "yedek": str(yedek)}
     gecici = None
     wb = None
@@ -491,7 +493,7 @@ def yedekten_geri_don(*, aktor: str, neden: str, onay: str) -> dict:
     if not str(aktor or "").strip() or not str(neden or "").strip():
         raise DepoHatasi("ONAY_YOK", "Geri dönüş için aktör ve neden zorunludur.")
     ana, yedek = config.ana_excel_yolu(), config.yedek_excel_yolu()
-    olay = {"aktor": str(aktor), "neden": str(neden), "ana": str(ana), "yedek": str(yedek)}
+    olay: dict[str, Any] = {"aktor": str(aktor), "neden": str(neden), "ana": str(ana), "yedek": str(yedek)}
     t_ana = t_yedek = None
     try:
         with yazma_kilidi():
@@ -553,7 +555,7 @@ def harici_dosyayi_ana_yap(kaynak, *, aktor: str, neden: str = "") -> dict:
         raise DepoHatasi("KAYNAK_GECERSIZ", "Kaynak dosya zaten ana veya yedek dosyadır.")
     if kaynak.suffix.lower() != ".xlsx":
         raise DepoHatasi("KAYNAK_GECERSIZ", "Yalnız .xlsx dosyaları ana dosya yapılabilir.")
-    olay = {"aktor": str(aktor), "neden": str(neden), "kaynak_dosya": str(kaynak)}
+    olay: dict[str, Any] = {"aktor": str(aktor), "neden": str(neden), "kaynak_dosya": str(kaynak)}
     gecici = None
     try:
         with yazma_kilidi():

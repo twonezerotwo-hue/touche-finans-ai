@@ -63,7 +63,7 @@ def _satirlari_oku(con, faaliyet_key=None):
     """Kapsamdaki tum defter satirlari (fis basina gruplanmis)."""
     if con is None:
         return {}, set()
-    ic = set()
+    ic: set[str] = set()
     try:
         for r in con.execute("SELECT kaynak_fis_id a, hedef_fis_id b FROM sirketler_arasi_islemler"):
             ic.update((r["a"], r["b"]))
@@ -214,6 +214,18 @@ def _uyarilar(ham) -> list[str]:
     return u
 
 
+def _mutabakat_uyarilari() -> list[str]:
+    """Excel ile merkezi defter arasindaki fark (elle girilen/degistirilen satirlar) gorunur olsun.
+
+    Salt-okunur; mutabakat okunamazsa metrikleri bozmaz, yalniz uyari uretilmez."""
+    try:
+        import excel_defter_mutabakati as mutabakat
+
+        return mutabakat.uyari_metinleri()
+    except Exception:
+        return []
+
+
 def _kalem_tablosu(kalemler, fisler_kalem, ham_kalem):
     sonuc = []
     for k in kalemler:
@@ -241,7 +253,7 @@ def _kalem_tablosu(kalemler, fisler_kalem, ham_kalem):
 
 
 def _cari_bakiyeleri(fisler):
-    grup = {}
+    grup: dict[str, list] = {}
     for f in fisler:
         if f["ic"] or not f["cari"]:
             continue
@@ -406,7 +418,8 @@ def holding_ozeti(katalog: Katalog | None = None) -> dict:
     kons = _metrik_sozlugu(ham)
     return {
         "konsolide": kons, "faaliyetler": satirlar, "uyarilar": _uyarilar(ham) +
-        ([f"Defterde Excel tanımı olmayan faaliyet(ler): {', '.join(kayitsiz)}"] if kayitsiz else []),
+        ([f"Defterde Excel tanımı olmayan faaliyet(ler): {', '.join(kayitsiz)}"] if kayitsiz else []) +
+        _mutabakat_uyarilari(),
         "grup_ici_elimine_edilen_net": _m(0, "131/331 satırları konsolidasyonda elimine edilir"),
         "son_islemler": _son_islemler(tum, 10),
         "kaynak": "merkezi defter", "veri_tarihi": datetime.now().isoformat(timespec="seconds"),

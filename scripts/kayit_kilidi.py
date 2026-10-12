@@ -6,7 +6,7 @@ alir, bu yuzden zaten ``@kilitli`` olan bir cagiran onu sorunsuz cagirabilir.
 Baska bir surec kilidi tutuyorsa kisa bir sure beklenir; sure dolarsa anlasilir
 bir hata verilir.
 """
-import os
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -27,7 +27,7 @@ class KilitHatasi(RuntimeError):
 
 
 def _dosya_kilitle(f):
-    if os.name == "nt":  # pragma: no cover - Windows
+    if sys.platform == "win32":  # pragma: no cover - Windows
         import msvcrt
 
         msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
@@ -38,7 +38,7 @@ def _dosya_kilitle(f):
 
 
 def _dosya_birak(f):
-    if os.name == "nt":  # pragma: no cover - Windows
+    if sys.platform == "win32":  # pragma: no cover - Windows
         import msvcrt
 
         f.seek(0)

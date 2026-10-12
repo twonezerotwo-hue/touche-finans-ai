@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 import os
 from copy import deepcopy
+from typing import Any
 from faaliyet_sema import firma_tanimi
 
 # === KLASOR YAPISI ===
@@ -140,7 +141,7 @@ MAX_RETRY = 1
 
 # === FIRMA TANIMLARI ===
 # Tek finansal kaynak MASTER_EXCEL'dir. Faaliyetler ayrı dosya değil, master içindeki kayıtlardır.
-FIRMALAR = {
+FIRMALAR: dict[str, dict[str, Any]] = {
     "touche_holding": {
         "ad": "Touche Holding",
         "excel": str(MASTER_EXCEL),

@@ -10,6 +10,10 @@ Komutlar (Windows'ta ``py -3.12 scripts\\excel_operasyon.py <komut>``):
   temizle  [--kok YOL ...] Envanterde "artik uretilmis kopya" ve "ANA'da bulunmayan kayit yok"
                            olarak kanitlanan dosyalari listeler. Silmek icin --sil ve
                            onay kelimesi (--onay SIL) gerekir.
+  mutabakat                ANA Excel ile merkezi defteri karsilastirir (SALT-OKUNUR): Excel'de elle girilmis /
+                           degistirilmis satirlar deftere yansimiyor mu? Hicbir sey degistirmez.
+  defteri-aktar            Deftere yansimamis Excel satirlarini listeler; --onay AKTAR ile merkezi SQLite
+                           deftere aktarir (Excel'e DOKUNMAZ, idempotent).
   geri-don                 ANA ile YEDEK'i takas eder (acil durum). --onay GERI-DON ister.
   entegre-et DOSYA         Onaylanmis, disarida duzenlenmis bir XLSX'i yeni ANA yapar (YEDEK=onceki ANA).
 
@@ -165,8 +169,8 @@ def tara(kokler) -> list[dict]:
 
 def silinebilir(b: dict) -> bool:
     """Yalniz kanitlanmis, bu sistemin urettigi artik kopyalar silinebilir."""
-    return (b.get("rol") in {"ESKI_URETILMIS_KOPYA", "KOPYA(ANA ile birebir ayni)"}
-            and b.get("uretilmis_kopya") and not b.get("tekil_kayit"))
+    return bool(b.get("rol") in {"ESKI_URETILMIS_KOPYA", "KOPYA(ANA ile birebir ayni)"}
+                and b.get("uretilmis_kopya") and not b.get("tekil_kayit"))
 
 
 def rapor_yaz(bulunanlar, hedef: Path):
@@ -191,6 +195,9 @@ def main(argv=None):
     alt = ap.add_subparsers(dest="komut", required=True)
     alt.add_parser("durum")
     alt.add_parser("dogrula")
+    alt.add_parser("mutabakat")
+    p = alt.add_parser("defteri-aktar")
+    p.add_argument("--onay", default="")
     for ad in ("envanter", "temizle"):
         p = alt.add_parser(ad)
         p.add_argument("--kok", action="append", help="Taranacak klasör (birden fazla verilebilir)")
@@ -227,6 +234,36 @@ def main(argv=None):
                 print(f"{ad}: HATA {exc}")
                 kod = 1
         return kod
+    if a.komut == "mutabakat":
+        import excel_defter_mutabakati as mut
+
+        r = mut.kontrol()
+        print(f"Excel aktif satır: {r['excel_aktif_satir']} · Defter fişi: {r['defter_fis']}")
+        for ad, baslik in (("eksik_defterde", "Excel'de var, defterde YOK"), ("tutar_farki", "Tutar farkı")):
+            print(f"\n{baslik}: {len(r[ad])}")
+            for x in r[ad][:50]:
+                print("  -", {k: v for k, v in x.items() if v not in (None, "")})
+        print(f"\nDefterde fazla (Excel'de aktif karşılığı yok): {len(r['defterde_fazla'])}")
+        for x in r["defterde_fazla"][:50]:
+            print("  -", x)
+        print("\nSonuç:", "TUTARLI" if r["tutarli"] else "FARK VAR (hiçbir şey değiştirilmedi)")
+        return 0 if r["tutarli"] else 3
+    if a.komut == "defteri-aktar":
+        import excel_defter_mutabakati as mut
+        import finans_cekirdegi as cekirdek
+
+        eksik = mut.kontrol()["eksik_defterde"]
+        print(f"Merkezi defterde karşılığı olmayan Excel kaydı: {len(eksik)}")
+        for x in eksik[:50]:
+            print("  -", x["kayit_id"], x["cari"], x["proje"], x["excel_tutar"], x["pb"])
+        if not eksik:
+            return 0
+        if a.onay != "AKTAR":
+            print("Bu kayıtları merkezi deftere aktarmak için: defteri-aktar --onay AKTAR (Excel'e dokunulmaz).")
+            return 0
+        sonuc = cekirdek.holding_excelini_aktar()
+        print("Aktarım:", sonuc)
+        return 0 if not sonuc["hatalar"] else 4
     if a.komut in ("envanter", "temizle"):
         kokler = [Path(k) for k in a.kok] if a.kok else varsayilan_kokler()
         bulunanlar = tara(kokler)

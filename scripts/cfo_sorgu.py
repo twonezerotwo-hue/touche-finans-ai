@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -14,7 +15,7 @@ from datetime import date, datetime
 
 import cfo_niyet as N
 import proje_finansi as pf
-from cfo_varliklar import Katalog, katalog_yukle, norm
+from cfo_varliklar import Katalog, Varlik, katalog_yukle, norm
 from guvenlik import audit_yaz
 from money import tl_metin
 
@@ -34,9 +35,9 @@ METRIKLER = {
 @dataclass
 class Sorgu:
     metrik: str | None = None
-    faaliyet: object = None
-    proje: object = None
-    cari: object = None
+    faaliyet: Varlik | None = None
+    proje: Varlik | None = None
+    cari: Varlik | None = None
     bas: date | None = None
     bit: date | None = None
     donem_etiketi: str = "Tüm dönem"
@@ -126,7 +127,8 @@ def _filtrele(fisler, s: Sorgu):
 
 def calistir(s: Sorgu) -> dict:
     """Sorguyu SALT-OKUNUR defterde hesaplar; yapisal sonuc dondurur."""
-    anahtar, baslik, etiket = METRIKLER[s.metrik]
+    metrik = s.metrik or ""
+    anahtar, baslik, etiket = METRIKLER[metrik]
     with pf.okuma_baglantisi() as con:
         fisler, _ = pf._satirlari_oku(con, s.faaliyet.kimlik if s.faaliyet else None)
     secili = _filtrele(fisler, s)
@@ -135,7 +137,7 @@ def calistir(s: Sorgu) -> dict:
     ilgili = [f for f in secili if f["durum"] == "MUHASEBELESTI" and not f["ic"]
               and pf.fis_sinifi(f) in {"ODENEN": ("Ödeme", "Nakit gider"), "TAHSIL": ("Tahsilat",),
                                        "GIDER": ("Gider tahakkuku", "Nakit gider"),
-                                       "KAZANC": ("Hakediş / gelir tahakkuku", "Nakit gelir")}.get(s.metrik, ())]
+                                       "KAZANC": ("Hakediş / gelir tahakkuku", "Nakit gelir")}.get(metrik, ())]
     kalemler = [{"tarih": f["tarih"], "fis_id": f["fis_id"], "cari": f["cari"], "proje": f["proje"],
                  "tutar_kurus": max((max(x[2], x[3]) for x in f["satirlar"]), default=0),
                  "aciklama": f["aciklama"][:120]} for f in sorted(ilgili, key=lambda x: (x["tarih"], x["fis_id"]))]
@@ -244,8 +246,8 @@ def cevapla(metin, katalog: Katalog | None = None, bugun: date | None = None, ak
                     "aksiyonlar": [], "degisiklik_yapildi": False}
         sonuc = calistir(s)
         yanit_metni = acikla(sonuc, s.detay)
-    audit_yaz("cfo_sorgu", aktor=str(aktor), metrik=s.metrik, kapsam=getattr(s, "faaliyet", None) and s.faaliyet.kimlik,
-              soru_hash=__import__("hashlib").sha256(metin.encode("utf-8")).hexdigest())
+    audit_yaz("cfo_sorgu", aktor=str(aktor), metrik=s.metrik, kapsam=s.faaliyet.kimlik if s.faaliyet else None,
+              soru_hash=hashlib.sha256(metin.encode("utf-8")).hexdigest())
     kanitlar = []
     if s.metrik != "KAYIT_GECMISI":
         kanitlar = [f"Kapsam: {sonuc['kapsam']}", f"Dönem: {sonuc['donem']}", f"Kayıt sayısı: {sonuc['adet']}",

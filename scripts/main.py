@@ -29,7 +29,7 @@ from finans_cekirdegi import fis_taslaklari, finans_kaydi_kuyruga_al, finans_kay
 
 def _log_kur():
     """Gunluk log dosyasini kurar; klasor yoksa olusturur, yazilamazsa konsola duser."""
-    handlers = [logging.StreamHandler(sys.stdout)]
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
     try:
         LOGLAR.mkdir(parents=True, exist_ok=True)
         handlers.insert(0, logging.FileHandler(LOGLAR / f"{datetime.now():%Y-%m-%d}.log", encoding="utf-8"))

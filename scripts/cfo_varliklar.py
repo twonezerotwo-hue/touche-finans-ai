@@ -74,7 +74,7 @@ def _alias_eslesmesi(metin_jetonlari: list[str], alias: str, yasak: frozenset = 
     ad_jetonlari = alias.split()
     if not ad_jetonlari:
         return None
-    konumlar = []
+    konumlar: list[int] = []
     for aj in ad_jetonlari:
         bulundu = None
         for i, mj in enumerate(metin_jetonlari):
@@ -93,18 +93,18 @@ def _bulanik_eslesme(metin_jetonlari: list[str], alias: str, yasak: frozenset = 
     ad_jetonlari = alias.split()
     if not ad_jetonlari:
         return None
-    konumlar = []
+    konumlar: list[int] = []
     for aj in ad_jetonlari:
-        en_iyi = (0.0, None)
+        en_oran, en_konum = 0.0, None
         for i, mj in enumerate(metin_jetonlari):
             if i in yasak or i in konumlar or len(mj) < 4 or len(aj) < 4:
                 continue
             oran = SequenceMatcher(None, mj, aj).ratio()
-            if oran > en_iyi[0]:
-                en_iyi = (oran, i)
-        if en_iyi[0] < _BULANIK_ESIK:
+            if oran > en_oran:
+                en_oran, en_konum = oran, i
+        if en_konum is None or en_oran < _BULANIK_ESIK:
             return None
-        konumlar.append(en_iyi[1])
+        konumlar.append(en_konum)
     return frozenset(konumlar)
 
 
@@ -217,7 +217,7 @@ class Katalog:
 def _faaliyet_takma_adlari(key, firma, tum_firmalar):
     adlar = [firma.get("ad"), firma.get("faaliyet"), key.replace("_", " "), *(firma.get("faaliyet_aliaslari") or [])]
     adlar = [a for a in adlar if a]
-    ilk_jetonlar = {}
+    ilk_jetonlar: dict[str, list[str]] = {}
     for k, f in tum_firmalar.items():
         jt = jetonlar(f.get("ad"))
         if jt:

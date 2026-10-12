@@ -367,6 +367,38 @@ class GeriDonusTestleri(DepoTestTemeli):
             self.assertNotIn("geri-don", dosya.read_text(encoding="utf-8").lower(), dosya.name)
 
 
+class TekYazmaHattiStatikTestleri(unittest.TestCase):
+    """Mimari degismezler: kaynak kod duzeyinde, ayri bir yazma hatti/yedek mekanizmasi geri gelemez."""
+
+    SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+    def test_calisma_kitabini_yalniz_excel_deposu_kaydeder(self):
+        kaydet = re.compile(r"\b(?:wb|workbook|master_wb|holding|kontrol|yeni_wb)\.save\(")
+        for dosya in self.SCRIPTS.glob("*.py"):
+            if dosya.name == "excel_deposu.py":
+                continue
+            self.assertIsNone(kaydet.search(dosya.read_text(encoding="utf-8")),
+                              f"{dosya.name}: çalışma kitabı excel_deposu dışında kaydedilemez")
+
+    def test_tarihli_veya_islem_basina_yedek_mekanizmasi_yok(self):
+        yasak = ("YEDEK_SAYISI", "kurulum_yedek", "excel_yedek", "_yedek_al(", "yedek_klasoru")
+        for dosya in self.SCRIPTS.glob("*.py"):
+            if dosya.name == "excel_operasyon.py":      # eski kopyalari tanimak/temizlemek icin kalip listesi tutar
+                continue
+            metin = dosya.read_text(encoding="utf-8")
+            for k in yasak:
+                self.assertNotIn(k, metin, f"{dosya.name}: '{k}'")
+
+    def test_ana_excel_yolu_yalniz_config_uzerinden_cozulur(self):
+        """Kullanici masaustu yolu / sabit Excel adi yalnizca config.py'de bulunur."""
+        for dosya in self.SCRIPTS.glob("*.py"):
+            if dosya.name in {"config.py", "excel_operasyon.py"}:
+                continue
+            metin = dosya.read_text(encoding="utf-8")
+            self.assertNotIn("C:\\Users", metin, dosya.name)
+            self.assertNotIn("AI Ready Finans", metin, dosya.name)
+
+
 class HariciDosyaVeAuditTestleri(DepoTestTemeli):
     def test_harici_dosya_ana_olur_tek_yedek_korunur(self):
         yeni = tam_akilli_excel(self.root / "disarida" / "onayli.xlsx")
