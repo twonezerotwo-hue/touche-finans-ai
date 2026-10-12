@@ -326,7 +326,15 @@ def onayla(token, aktor, parola=None):
         if not bekleyen or bekleyen["durum"] != "ONAY_BEKLIYOR":
             raise ValueError("Belge onay beklemiyor.")
         hazir = bekleyen["hazir"]
-        if bekleyen.get("kaynak_turu") == "sohbet" and hazir.get("kaynak_metin"):
+        if hazir.get("cikarim_motoru") == "deterministik_cfo":
+            # Sihirbaz taslagi: onay anindaki guncel master veriyle yeniden dogrulanir (LLM/metin yorumu yok).
+            md = master_data_oku(hazir["firma_key"])
+            hazir["dogrulama"] = deterministik_dogrula(hazir["veri"], hazir["firma_key"], hazir["tur"], md=md)
+            for kayit in hazir["veri"].get("kayitlar", []):
+                kayit["_dogrulama_durumu"] = hazir["dogrulama"]["durum"]
+            bekleyen["hazir"] = _json_uyumlu(hazir)
+            _kaydet()
+        elif bekleyen.get("kaynak_turu") == "sohbet" and hazir.get("kaynak_metin"):
             md = master_data_oku(hazir["firma_key"])
             yeniden = _adayi_dogrula(hazir.get("veri") or {}, hazir["kaynak_metin"], hazir["firma_key"], md)
             if yeniden:
@@ -349,6 +357,12 @@ def onayla(token, aktor, parola=None):
         bekleyen["durum"] = "TAMAMLANDI"
         bekleyen["tamamlanma"] = datetime.now().isoformat(timespec="seconds")
         _kaydet()
+    try:
+        import cfo_sohbet
+
+        cfo_sohbet.onay_tamamlandi(token)
+    except Exception as exc:  # taslak durumu yazilamamasi finansal kaydi geri almaz
+        audit_yaz("cfo_taslak_durum_hatasi", token=token, hata=str(exc))
     return {"tamam": True, "onay": {"tamam": True, "yontem": "parola"}, "belge": ozet(token)}
 
 
@@ -362,6 +376,12 @@ def reddet(token, aktor):
         bekleyen["tamamlanma"] = datetime.now().isoformat(timespec="seconds")
         _kaydet()
     audit_yaz("ui_belge_reddi", belge_id=bekleyen["hazir"].get("belge_id"), aktor=str(aktor))
+    try:
+        import cfo_sohbet
+
+        cfo_sohbet.reddedildi(token)
+    except Exception as exc:
+        audit_yaz("cfo_taslak_durum_hatasi", token=token, hata=str(exc))
     return ozet(token)
 
 

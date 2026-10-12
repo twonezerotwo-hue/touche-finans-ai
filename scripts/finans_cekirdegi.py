@@ -378,9 +378,16 @@ def fis_taslaklari(hazir):
                 "pb": pb,
                 "kur_mikro": max(1, int(kur * 1_000_000)),
                 "kaynak": str(kayit.get("_dosya_adi") or hazir.get("kaynak_metin") or ""),
+                "is_kalemi_id": str(kayit.get("Is_Kalemi_ID") or "").strip() or None,
                 "satirlar": satirlar,
             })
     return taslaklar
+
+
+def _is_kalemi_kolonu_hazirla(con):
+    """fisler.is_kalemi_id (nullable, ek) yoksa ekler; var olan veriye dokunmaz."""
+    if not any(r[1] == "is_kalemi_id" for r in con.execute("PRAGMA table_info(fisler)").fetchall()):
+        con.execute("ALTER TABLE fisler ADD COLUMN is_kalemi_id TEXT")
 
 
 def finans_kaydi_yaz(hazir, onaylayan="sistem"):
@@ -426,6 +433,9 @@ def finans_kaydi_yaz(hazir, onaylayan="sistem"):
                 "INSERT INTO fis_satirlari(fis_id,satir_no,hesap_kodu,borc_kurus,alacak_kurus,aciklama) VALUES(?,?,?,?,?,?)",
                 [(fis["fis_id"], no, s["hesap"], s["borc"], s["alacak"], s["aciklama"]) for no, s in enumerate(fis["satirlar"], 1)],
             )
+            if fis.get("is_kalemi_id"):
+                _is_kalemi_kolonu_hazirla(con)
+                con.execute("UPDATE fisler SET is_kalemi_id=? WHERE fis_id=?", (fis["is_kalemi_id"], fis["fis_id"]))
         con.execute(
             "INSERT OR IGNORE INTO belge_butunlugu(belge_id,sha256,finansal_hash,kaynak,kayit_zamani,dogrulama_durumu) "
             "VALUES(?,?,?,?,?,?)",

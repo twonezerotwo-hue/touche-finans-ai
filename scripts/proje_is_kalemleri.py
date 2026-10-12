@@ -64,22 +64,26 @@ def _tutar_kurus(deger: float) -> int:
     return int((Decimal(str(deger)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def _satir_verisi(ws, satir: int) -> dict:
-    metraj = float(ws[f"G{satir}"].value or 0)
-    satis_bf = float(ws[f"H{satir}"].value or 0)
-    maliyet_turu = str(ws[f"J{satir}"].value or "Birim fiyat").strip()
-    maliyet_bf = float(ws[f"K{satir}"].value or 0)
+def _satir_dict(v) -> dict:
+    """A..R sütun değerlerinden (v[0]=A) iş kalemi sözlüğü üretir."""
+    def h(i):                      # i: 0-tabanli sutun
+        return v[i] if i < len(v) else None
+
+    metraj = float(h(6) or 0)
+    satis_bf = float(h(7) or 0)
+    maliyet_turu = str(h(9) or "Birim fiyat").strip()
+    maliyet_bf = float(h(10) or 0)
     ciro = metraj * satis_bf
     maliyet = maliyet_bf if _norm(maliyet_turu) == "toplam sabit" else metraj * maliyet_bf
     fark = ciro - maliyet
     return {
-        "kalem_id": str(ws[f"A{satir}"].value or "").strip(),
-        "faaliyet": str(ws[f"B{satir}"].value or "").strip(),
-        "faaliyet_key": faaliyet_anahtari_bul(ws[f"B{satir}"].value),
-        "proje": str(ws[f"C{satir}"].value or "").strip(),
-        "maliyet_grubu": str(ws[f"D{satir}"].value or "").strip(),
-        "is_kalemi": str(ws[f"E{satir}"].value or "").strip(),
-        "birim": str(ws[f"F{satir}"].value or "").strip(),
+        "kalem_id": str(h(0) or "").strip(),
+        "faaliyet": str(h(1) or "").strip(),
+        "faaliyet_key": faaliyet_anahtari_bul(h(1)),
+        "proje": str(h(2) or "").strip(),
+        "maliyet_grubu": str(h(3) or "").strip(),
+        "is_kalemi": str(h(4) or "").strip(),
+        "birim": str(h(5) or "").strip(),
         "metraj": metraj,
         "satis_birim_fiyati": satis_bf,
         "ciro": round(ciro, 2),
@@ -88,18 +92,25 @@ def _satir_verisi(ws, satir: int) -> dict:
         "maliyet": round(maliyet, 2),
         "brut_fark": round(fark, 2),
         "brut_marj": round(fark / ciro * 100, 2) if ciro else 0,
-        "durum": str(ws[f"O{satir}"].value or "").strip(),
-        "not": str(ws[f"P{satir}"].value or "").strip(),
-        "hakedis_kayit_id": str(ws[f"Q{satir}"].value or "").strip(),
-        "gider_kayit_id": str(ws[f"R{satir}"].value or "").strip(),
+        "durum": str(h(14) or "").strip(),
+        "not": str(h(15) or "").strip(),
+        "hakedis_kayit_id": str(h(16) or "").strip(),
+        "gider_kayit_id": str(h(17) or "").strip(),
     }
 
 
+def _satir_verisi(ws, satir: int) -> dict:
+    """Tek satir (normal, yazilabilir calisma kitabi icin)."""
+    satirlar = list(ws.iter_rows(min_row=satir, max_row=satir, min_col=1, max_col=18, values_only=True))
+    return _satir_dict(satirlar[0] if satirlar else ())
+
+
 def _kalemler(ws) -> list[dict]:
+    """Tum satirlari TEK gecişte okur (salt-okunur sayfada hucre adresiyle erisim O(n^2)'dir)."""
     sonuc = []
-    for satir in range(ILK_SATIR, SON_SATIR + 1):
-        if str(ws[f"A{satir}"].value or "").strip():
-            sonuc.append(_satir_verisi(ws, satir))
+    for v in ws.iter_rows(min_row=ILK_SATIR, max_row=SON_SATIR, min_col=1, max_col=18, values_only=True):
+        if str(v[0] or "").strip():
+            sonuc.append(_satir_dict(v))
     return sonuc
 
 

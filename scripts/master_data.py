@@ -2,6 +2,8 @@
 """Firma Excel'lerinden master data okuma (v2 - doğrulanmış sütunlar)."""
 
 import logging
+import threading
+from copy import deepcopy
 from pathlib import Path
 from openpyxl import load_workbook
 from config import FIRMALAR, ana_excel_yolu
@@ -85,6 +87,36 @@ def _oku_3d(ws, sutun1, sutun2, sutun3, ilk_satir, son_satir=300):
     return kayitlar
 
 
+_ONBELLEK = {"kimlik": None, "icerik": None}
+_ONBELLEK_KILIDI = threading.RLock()
+
+
+def onbellegi_temizle():
+    with _ONBELLEK_KILIDI:
+        _ONBELLEK.update(kimlik=None, icerik=None)
+
+
+def _dosya_kimligi(yol):
+    st = yol.stat()
+    return (str(yol.resolve()), st.st_mtime_ns, st.st_size)
+
+
+def _holding_verisi(excel_yolu):
+    """Ana Excel'i yalnizca dosya degistiginde yeniden okur (mtime+boyut+yol anahtari)."""
+    kimlik = _dosya_kimligi(excel_yolu)
+    with _ONBELLEK_KILIDI:
+        if _ONBELLEK["kimlik"] == kimlik and _ONBELLEK["icerik"] is not None:
+            return deepcopy(_ONBELLEK["icerik"])
+    wb = load_workbook(excel_yolu, read_only=False, data_only=True)
+    try:
+        icerik = _oku_touche(wb)
+    finally:
+        wb.close()
+    with _ONBELLEK_KILIDI:
+        _ONBELLEK.update(kimlik=kimlik, icerik=icerik)
+    return deepcopy(icerik)
+
+
 def master_data_oku(firma_key):
     if firma_key not in FIRMALAR:
         raise ValueError(f"Bilinmeyen firma: {firma_key}")
@@ -97,13 +129,9 @@ def master_data_oku(firma_key):
 
     log.info(f"Master data okunuyor: {firma['ad']}")
 
-    wb = load_workbook(excel_yolu, read_only=False, data_only=True)
-    try:
-        md_data = _oku_touche(wb)
-        if firma_key != "touche_holding":
-            md_data = _faaliyete_filtrele(md_data, firma_key)
-    finally:
-        wb.close()
+    md_data = _holding_verisi(excel_yolu)
+    if firma_key != "touche_holding":
+        md_data = _faaliyete_filtrele(md_data, firma_key)
 
     log.info(f"Master data OK: {firma['ad']} - "
              f"{len(md_data['faaliyetler'])} faaliyet, "
@@ -143,6 +171,11 @@ def _oku_touche(wb):
     md["hesaplar"] = list(dict.fromkeys(
         kayit["hesap"] for kayit in md["hesap_hiyerarsisi"]
     ))
+    # Hesap para birimleri (99_Ayarlar!N): sihirbaz tutar para birimini hesaptan cikarsayabilsin.
+    md["hesap_pb"] = {
+        str(hesap).strip(): str(pb).strip().upper()
+        for hesap, pb in _oku_2d(ws, "M", "N", 13, 63) if pb not in (None, "")
+    }
 
     # Cari tipleri: AH13:AH112
     md["cari_tipler"] = _oku_sutun(ws, "AH", 13, 113,
@@ -317,6 +350,7 @@ def _bos_master_data():
         "hesap_hiyerarsisi": [],
         "cari_hiyerarsisi": [],
         "kayit_gecmisi": [],
+        "hesap_pb": {},
     }
 
 

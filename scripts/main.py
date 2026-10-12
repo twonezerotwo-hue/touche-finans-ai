@@ -472,10 +472,20 @@ def hazirlanan_belgeyi_yaz(hazir, onay_kaynagi="otomatik"):
     except Exception as exc:
         audit_yaz("muhasebe_fisi_reddi", belge_id=hazir.get("belge_id"), hata=str(exc))
         return False, f"Muhasebe kontrolü başarısız: {exc}"
-    sonuc = yaz(hazir["firma_key"], hazir["veri"], hazir["belge_id"])
+    baglam = {
+        "orijinal_talimat": hazir.get("orijinal_talimat") or hazir.get("kaynak_metin"),
+        "normalize_komut": hazir.get("normalize_komut"), "onay_kaynagi": onay_kaynagi,
+        "taslak_id": hazir.get("taslak_id"),
+    }
+    sonuc = yaz(hazir["firma_key"], hazir["veri"], hazir["belge_id"], aktor=str(onay_kaynagi), baglam=baglam)
     if not sonuc["basari"]:
         audit_yaz("belge_isleme_hatasi", belge_id=hazir["belge_id"], hata=sonuc["hata"])
-        return False, sonuc["hata"]
+        if sonuc.get("hata_kodu") != "MUKERRER_BELGE":
+            return False, sonuc["hata"]
+        # Ayni belge Excel'e daha once yazilmis (yeniden deneme/cift tiklama/cokme sonrasi):
+        # ikinci Excel kaydi olusmaz; merkez defter adimi idempotent oldugundan yine calistirilir.
+        audit_yaz("belge_tekrar_onayi_idempotent", belge_id=hazir["belge_id"])
+        sonuc = {"basari": True, "yazilan": 0, "tekrar": True}
     son_hata = None
     for deneme in range(3):
         try:
