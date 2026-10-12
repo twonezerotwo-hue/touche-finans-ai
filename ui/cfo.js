@@ -49,12 +49,18 @@
     for (let i = 0; i < 6; i++) wrap.appendChild(el("div", { class: "cfo-skeleton" }));
     return wrap;
   }
+  /* Icerik ayri bir kutuya cizilir; yalniz EN SON gezinme hala gecerliyse yerine konur. Boylece
+     iskelet (skeleton) kalmaz ve yavas bir onceki yukleme yeni sayfanin ustune yazamaz. */
+  let yuklemeSirasi = 0;
   async function withLoad(container, loader) {
+    const sira = ++yuklemeSirasi;
     container.replaceChildren(skeleton());
+    const kutu = el("div", { class: "cfo-icerik" });
     try {
-      await loader(container);
+      await loader(kutu);
+      if (sira === yuklemeSirasi) container.replaceChildren(...kutu.childNodes);
     } catch (err) {
-      container.replaceChildren(el("div", { class: "cfo-error", text: `${t("error")}: ${err.message}` }));
+      if (sira === yuklemeSirasi) container.replaceChildren(el("div", { class: "cfo-error", text: `${t("error")}: ${err.message}` }));
     }
   }
 
@@ -97,7 +103,7 @@
     search.addEventListener("input", () => { state.q = search.value.toLowerCase(); state.page = 1; draw(); });
     toolbar.appendChild(search);
     columns.forEach((c) => {
-      const lbl = el("label", { style: "font-size:12px;color:#5c7268" });
+      const lbl = el("label", { class: "cfo-col-label" });
       const box = el("input", { type: "checkbox" });
       box.checked = !c.hidden;
       lbl.appendChild(box); lbl.appendChild(document.createTextNode(" " + c.label));
@@ -152,7 +158,7 @@
           else td.textContent = c.format ? c.format(r) : (r[c.key] ?? "");
           tr.appendChild(td);
         });
-        if (opts.onRow) { tr.style.cursor = "pointer"; tr.addEventListener("click", () => opts.onRow(r)); }
+        if (opts.onRow) { tr.classList.add("cfo-row-link"); tr.addEventListener("click", () => opts.onRow(r)); }
         tbody.appendChild(tr);
       });
       tableWrap.replaceChildren(el("table", { class: "cfo-table" }, [el("thead", {}, thead), tbody]));
@@ -287,7 +293,9 @@
   window.CFOshow = (view, params) => git(view, params);
   window.CFOregister = (id, fn) => { RENDER[id] = fn; };
   window.CFOinit = () => hashtenCiz();
-  const baslat = () => hashtenCiz();
+  /* Gorunumler (asagidaki bloklar) ayni betikte sonradan kaydedilir; ilk cizim betik tamamen
+     degerlendirildikten sonra yapilmalidir, yoksa derin baglanti (#/proje/...) bos sayfa cizer. */
+  const baslat = () => setTimeout(hashtenCiz, 0);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", baslat);
   else baslat();
 })();
@@ -305,7 +313,7 @@
     const kart = kpiCard(baslik, yok ? DNA : m.metin, (m && m.aciklama) || ek || "");
     kart.setAttribute("data-metrik", baslik);
     if (yok) kart.classList.add("cfo-kpi-yok");
-    kart.style.cursor = "default";
+    kart.classList.add("cfo-card-static");
     return kart;
   }
   function metrikIzgarasi(mt, sozlesme) {
@@ -520,7 +528,7 @@
       kpiCard("Risk", n.risk ? "VAR" : "YOK", n.risk ? t("risk_risky") : t("risk_safe")),
     );
     root.appendChild(kutu);
-    root.appendChild(el("div", { style: "overflow-x:auto" }, lineChart(n.haftalar.map((h) => ({ ad: h.hafta_no, v: h.kapanis_kurus })), n.esik_kurus)));
+    root.appendChild(el("div", { class: "cfo-scroll-x" }, lineChart(n.haftalar.map((h) => ({ ad: h.hafta_no, v: h.kapanis_kurus })), n.esik_kurus)));
     root.appendChild(el("h3", { text: "Haftalık detay" }));
     root.appendChild(dataTable([
       { key: "hafta_no", label: t("th_hafta"), num: true },
@@ -705,7 +713,7 @@
     root.appendChild(el("h2", { text: "Belge Otomasyonu" }));
     root.appendChild(el("p", { class: "cfo-sub", text: "UPLOAD → PARSE → OCR → EXTRACTION → SINIFLANDIRMA → DUPLICATE → MATCHING → REVIEW → APPROVAL → POSTING" }));
     const card = el("div", { class: "cfo-card" });
-    const taslak = el("textarea", { rows: "4", placeholder: "Belge metni (fatura/dekont metni)…", style: "width:100%;border:1px solid #d9e4dc;border-radius:8px;padding:8px" });
+    const taslak = el("textarea", { rows: "4", placeholder: "Belge metni (fatura/dekont metni)…", class: "cfo-input" });
     const dosyaAdi = el("input", { type: "text", placeholder: "Dosya adı (örn: fatura.pdf)", value: "fatura.pdf" });
     const proje = el("input", { type: "text", placeholder: "Proje (opsiyonel)" });
     const btn = el("button", { type: "button", text: "Hattı çalıştır" });
@@ -744,9 +752,9 @@
     ])));
     root.appendChild(liste);
     const card = el("div", { class: "cfo-card" });
-    const soru = el("input", { type: "text", placeholder: t("ai_placeholder"), style: "width:100%;border:1px solid #d9e4dc;border-radius:8px;padding:8px" });
+    const soru = el("input", { type: "text", placeholder: t("ai_placeholder"), class: "cfo-input" });
     const btn = el("button", { type: "button", text: t("btn_sor") });
-    const cevap = el("div", { style: "margin-top:12px" });
+    const cevap = el("div", { class: "cfo-mt" });
     card.append(soru, el("div", { class: "cfo-toolbar" }, [btn]), cevap);
     root.appendChild(card);
     const sor = async () => {

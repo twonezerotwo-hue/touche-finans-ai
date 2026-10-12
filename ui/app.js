@@ -338,7 +338,6 @@ document.addEventListener("DOMContentLoaded",async()=>{
   $("headerDate").textContent=new Intl.DateTimeFormat("tr-TR",{day:"2-digit",month:"long",year:"numeric"}).format(new Date());
   $("pairForm").addEventListener("submit",async e=>{e.preventDefault();try{await jsonRequest("/api/session/pair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kod:$("pairCode").value})});location.reload();}catch(err){$("pairError").textContent=err.message;}});
   if(!await checkSession())return;
-  try{ await loadActivities(); await Promise.all([loadDashboard(),loadDocuments(true),loadProjectItems(),loadPendingChatDraft()]); await loadPendingCfoWizard(); }catch(e){ $("anaKarar").textContent=`Veri yüklenemedi: ${e.message}`; }
   $("faaliyet").addEventListener("change",()=>{state.lastIntent=null;state.lastContextQuestion=null;return Promise.all([loadDashboard(),loadProjectItems()]).catch(e=>addMessage(e.message,"assistant"));});
   ["risk","rezerv","vade"].forEach(id=>$(id).addEventListener("change",()=>loadDashboard().catch(e=>addMessage(e.message,"assistant"))));
   $("chatForm").addEventListener("submit",e=>{e.preventDefault();ask();}); document.querySelectorAll("[data-question]").forEach(b=>b.addEventListener("click",()=>ask(b.dataset.question)));
@@ -357,4 +356,6 @@ document.addEventListener("DOMContentLoaded",async()=>{
   ["transferDialog","fxDialog","periodDialog","governanceDialog"].forEach(id=>$(id).querySelector(".dialog-close").addEventListener("click",()=>$(id).close()));
   $("generateCode").addEventListener("click",async()=>{try{const d=await jsonRequest("/api/remote/code",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});$("remoteCode").textContent=d.kod;}catch(e){$("remoteCode").textContent=e.message;}});
   ["dragenter","dragover"].forEach(n=>$("dropZone").addEventListener(n,e=>{e.preventDefault();$("dropZone").classList.add("drag");})); $("dropZone").addEventListener("dragleave",()=>$("dropZone").classList.remove("drag"));$("dropZone").addEventListener("drop",e=>{e.preventDefault();$("dropZone").classList.remove("drag");if(e.dataTransfer?.files?.length){$("dosya").files=e.dataTransfer.files;updateSelectedDocumentFile();}});
+  // Olay dinleyicileri veri yuklenmeden ONCE baglanir: aksi halde erken 'Gonder' tiklamasi formu sayfa yenilemesiyle gonderirdi.
+  try{ await loadActivities(); await Promise.all([loadDashboard(),loadDocuments(true),loadProjectItems(),loadPendingChatDraft()]); await loadPendingCfoWizard(); }catch(e){ $("anaKarar").textContent=`Veri yüklenemedi: ${e.message}`; }
 });

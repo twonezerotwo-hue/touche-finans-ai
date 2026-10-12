@@ -141,3 +141,11 @@ table.cfo-table tr:hover td { background: #f7fbf8; }
 .cfo-chip:disabled { cursor: default; }
 .cfo-chip-iptal { border-color: var(--cfo-line); color: var(--cfo-muted); }
 .cfo-ipucu { display: block; color: var(--cfo-muted); margin-bottom: 6px; }
+/* CSP (style-src 'self') satir ici style niteligine izin vermez; ilgili stiller sinif olarak tutulur. */
+.cfo-col-label { font-size: 12px; color: var(--cfo-muted); }
+.cfo-scroll-x { overflow-x: auto; }
+.cfo-input { width: 100%; border: 1px solid var(--cfo-line); border-radius: 8px; padding: 8px; box-sizing: border-box; }
+.cfo-mt { margin-top: 12px; }
+.cfo-row-link { cursor: pointer; }
+.cfo-card-static { cursor: default; }
+.risk-gauge { --score: 0; }

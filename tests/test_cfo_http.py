@@ -118,6 +118,44 @@ class CfoHttpTestleri(CfoTestTemeli):
         self.assertEqual(d["niyet"], "cfo_desteklenmiyor")
         self.assertEqual(self.ledger(), [])
 
+    def test_http_bos_baslangic_yeni_odeme_her_seyi_sirayla_sorar(self):
+        st, d = self.chat("yeni ödeme")
+        self.assertEqual(st, 200)
+        self.assertEqual(d["niyet"], "cfo_sihirbaz")
+        self.assertEqual(d["cfo"]["soru"]["alan"], "faaliyet")
+        self.assertEqual(ui_taslak_sayisi(), 0)
+        for soru in ("yeni kayıt", "Yeni Gider", "kayıt ekle"):
+            st, d = self.chat(soru)
+            self.assertEqual(d["niyet"], "cfo_sihirbaz", soru)
+            self.assertEqual(d["cfo"]["soru"]["alan"], "faaliyet", soru)
+
+    def test_http_tekrar_yine_de_ve_vazgec(self):
+        self.gecmis_odeme_yaz()
+        komut = "Göktürk okuluna Gürsar Mimarlık adına Devrim'e 10 bin TL ödeme yapıldı."
+        _, d = self.chat(komut)
+        self.req("POST", f"/api/belge/{d['kayit_taslagi']['token']}/onay", {"parola": "x"})
+        _, d2 = self.chat(komut)
+        self.assertEqual(d2["niyet"], "cfo_tekrar_uyarisi")
+        # vazgeç: hiçbir şey yazılmaz, taslak yok
+        st, v = self.req("POST", "/api/cfo/adim", {"alan": "tekrar", "secim": "vazgec", "metin": komut})
+        self.assertEqual(st, 200)
+        self.assertEqual(v["niyet"], "kayit_reddi")
+        self.assertEqual(len(self.ledger()), 2)
+        # yine de ekle: yeni taslak açılır; onaydan sonra ikinci kayıt yazılır
+        st, y = self.req("POST", "/api/cfo/adim", {"alan": "tekrar", "secim": "yine_de", "metin": komut})
+        self.assertEqual(st, 200, y)
+        self.assertIsNotNone(y["kayit_taslagi"])
+        self.req("POST", f"/api/belge/{y['kayit_taslagi']['token']}/onay", {"parola": "x"})
+        self.assertEqual(len(self.ledger()), 3)
+
+    def test_http_sihirbaz_iptal(self):
+        _, d = self.chat("10 bin ödeme yapıldı")
+        tid = d["cfo"]["taslak_id"]
+        st, i = self.chat("iptal", cfo_taslak=tid)
+        self.assertEqual(st, 200)
+        self.assertEqual(ui_taslak_sayisi(), 0)
+        self.assertFalse(i.get("degisiklik_yapildi"))
+
     # --- gezinme veri uclari ---
     def test_http_holding_faaliyet_proje_uclari(self):
         cekirdek.finans_kaydi_yaz({"belge_id": "H1", "firma_key": "gursar_mimarlik", "tur": "finans_belgesi",
