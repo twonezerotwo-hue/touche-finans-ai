@@ -10,7 +10,7 @@ python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_
 ```
 Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests` also works for the non-browser tests.
 
-Result at the time of writing: **296 passed, 1 skipped** (the skip needs a copy of a production DB, see below).
+Result at the time of writing: **301 passed, 1 skipped** (the skip needs a copy of a production DB, see below).
 Baseline on the original commit: 6 modules failed at import; with that worked around, 126 passed / 21 failed.
 
 ## Production data is never touched

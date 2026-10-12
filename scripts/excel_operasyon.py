@@ -10,6 +10,10 @@ Komutlar (Windows'ta ``py -3.12 scripts\\excel_operasyon.py <komut>``):
   temizle  [--kok YOL ...] Envanterde "artik uretilmis kopya" ve "ANA'da bulunmayan kayit yok"
                            olarak kanitlanan dosyalari listeler. Silmek icin --sil ve
                            onay kelimesi (--onay SIL) gerekir.
+  yedek-olustur            YEDEK yoksa ANA'nin dogrulanmis kopyasini olusturur (var ve farkliysa --onay YENILE ister:
+                           eski YEDEK = onceki surum kaybolur). Normal calismada YEDEK her yazmada otomatik yenilenir.
+  kanit DOSYA              Bir dosyanin ANA tarafindan KAPSANDIGINA dair kanit raporu (okunur mu, ledger sayfasi, bilinmeyen
+                           sayfa, ANA'da olmayan Kayit_ID / Kalem_ID). Hicbir sey degistirmez.
   mutabakat                ANA Excel ile merkezi defteri karsilastirir (SALT-OKUNUR): Excel'de elle girilmis /
                            degistirilmis satirlar deftere yansimiyor mu? Hicbir sey degistirmez.
   defteri-aktar            Deftere yansimamis Excel satirlarini listeler; --onay AKTAR ile merkezi SQLite
@@ -246,15 +250,24 @@ def tara(kokler) -> list[dict]:
     return sorted(bulunanlar, key=lambda b: (b.get("rol") != "MAIN", b.get("rol") != "BACKUP", str(b["yol"])))
 
 
-def silinebilir(b: dict) -> bool:
+def kanit_temiz(b: dict) -> bool:
+    """ANA'nin dosyayi kapsadigi kanitlandi mi: okunabilir, tekil kayit/kalem yok, kapsama sorunu yok."""
+    return bool(b.get("sayfalar") is not None and not b.get("tekil_kayit") and not b.get("tekil_kalem")
+                and not b.get("kapsama_sorunlari"))
+
+
+def silinebilir(b: dict, dahil=()) -> bool:
     """Yalniz kanitlanmis, bu sistemin urettigi artik kopyalar silinebilir.
 
     Kanit: (a) dosya adi/klasoru sistemin urettigi kopya kaliplarindan biri, VE
     (b) ANA ile birebir ayni ya da icindeki hicbir kayit/kalem kimligi ANA'da eksik degil, ledger sayfasi okunabilir
-    ve ANA'da olmayan dolu sayfa yok. Okunamayan veya kapsami kanitlanamayan dosya ASLA silinebilir degildir."""
-    return bool(b.get("rol") in {"ESKI_URETILMIS_KOPYA", "KOPYA(ANA ile birebir ayni)"}
-                and b.get("uretilmis_kopya") and not b.get("tekil_kayit")
-                and not b.get("kapsama_sorunlari") and not b.get("tekil_kalem"))
+    ve ANA'da olmayan dolu sayfa yok. Okunamayan veya kapsami kanitlanamayan dosya ASLA silinebilir degildir.
+    ``dahil``: operatorun acikca ekledigi siniflar (yalniz ``TEST``); bunlarda kalip yerine ad kanitı kullanilir ama
+    kapsama kaniti (b) YINE zorunludur."""
+    if b.get("rol") in {"ESKI_URETILMIS_KOPYA", "KOPYA(ANA ile birebir ayni)"} and b.get("uretilmis_kopya") \
+            and not b.get("tekil_kayit") and not b.get("kapsama_sorunlari") and not b.get("tekil_kalem"):
+        return True
+    return bool("TEST" in dahil and siniflandir(b) == "TEST" and kanit_temiz(b))
 
 
 def siniflandir(b: dict) -> str:
@@ -288,6 +301,30 @@ def siniflandir(b: dict) -> str:
     return "UNKNOWN"
 
 
+URETILMIS_KLASOR_ADLARI = {"yedek", "kurulum_yedek", "excel_yedek"}
+
+
+def bos_uretilmis_klasorleri_sil(klasorler) -> list[Path]:
+    """Silme sonrasi BOS kalan, bu sistemin urettigi yedek klasorlerini (firmalar/**/yedek, firmalar/kurulum_yedek/**,
+    arsiv/excel_yedek) kaldirir. ``rmdir`` yalniz bos klasoru siler; baska ad/yer ve dolu klasor asla etkilenmez."""
+    kokler = [(config.BASE_DIR / "firmalar").resolve(), (config.BASE_DIR / "arsiv").resolve()]
+    silinen = []
+    for k in sorted({Path(x).resolve() for x in klasorler}, key=lambda p: -len(p.parts)):
+        adaylar = [k, *k.parents]
+        for d in adaylar:
+            if not any(d != kok and kok in d.parents for kok in kokler):
+                break
+            kurulum_alti = "kurulum_yedek" in d.parts
+            if d.name not in URETILMIS_KLASOR_ADLARI and not (kurulum_alti and d.parent.name == "kurulum_yedek"):
+                break
+            try:
+                d.rmdir()
+            except OSError:
+                break                       # bos degil
+            silinen.append(d)
+    return silinen
+
+
 def rapor_yaz(bulunanlar, hedef: Path):
     s = ["# EXCEL_FILE_INVENTORY", "",
          f"Üretim zamanı: {datetime.now().isoformat(timespec='seconds')}  ",
@@ -317,10 +354,17 @@ def main(argv=None):
     for ad in ("envanter", "temizle"):
         p = alt.add_parser(ad)
         p.add_argument("--kok", action="append", help="Taranacak klasör (birden fazla verilebilir)")
-        p.add_argument("--rapor", default="EXCEL_FILE_INVENTORY.md")
+        p.add_argument("--rapor", default=None,
+                       help="Rapor dosyasi (varsayilan: <base>/loglar/excel_envanter_<tarih>.md; git'e girmez)")
         if ad == "temizle":
             p.add_argument("--sil", action="store_true")
             p.add_argument("--onay", default="")
+            p.add_argument("--dahil", default="", help="Ek silinebilir sinif (yalniz TEST; kapsama kaniti yine zorunlu)")
+    p = alt.add_parser("yedek-olustur")
+    p.add_argument("--onay", default="")
+    p.add_argument("--aktor", default=os.environ.get("USERNAME") or os.environ.get("USER") or "operator")
+    p = alt.add_parser("kanit")
+    p.add_argument("dosya")
     p = alt.add_parser("geri-don")
     p.add_argument("--neden", required=True)
     p.add_argument("--aktor", default=os.environ.get("USERNAME") or os.environ.get("USER") or "operator")
@@ -380,28 +424,82 @@ def main(argv=None):
         sonuc = cekirdek.holding_excelini_aktar()
         print("Aktarım:", sonuc)
         return 0 if not sonuc["hatalar"] else 4
+    if a.komut == "yedek-olustur":
+        from guvenlik import audit_yaz
+        from kayit_kilidi import yazma_kilidi
+
+        ana, yedek = config.ana_excel_yolu(), config.yedek_excel_yolu()
+        with yazma_kilidi():
+            depo.gecici_kalintilari_temizle()
+            depo.dogrula(ana)
+            if yedek.exists():
+                if depo.sha256(yedek) == depo.sha256(ana):
+                    print("YEDEK zaten ANA ile birebir ayni; yapilacak bir sey yok.")
+                    return 0
+                if a.onay != "YENILE":
+                    print("YEDEK zaten var ve ANA'dan FARKLI (onceki surum). Uzerine yazmak o surumu kaybettirir: "
+                          "gerekiyorsa --onay YENILE ile tekrar calistirin. Hicbir sey degismedi.")
+                    return 2
+            once = depo.sha256(yedek) if yedek.exists() else None
+            h = depo.yedegi_yenile()
+            audit_yaz("excel_yedek_olusturuldu", aktor=a.aktor, ana=str(ana), yedek=str(yedek), yedek_hash_once=once,
+                      ana_hash=h, yedek_hash=depo.sha256(yedek))
+        print(f"YEDEK olusturuldu/yenilendi: {yedek}\n  sha256={h}")
+        return 0
+    if a.komut == "kanit":
+        yol = Path(a.dosya)
+        ana = config.ana_excel_yolu()
+        if not yol.exists():
+            print("Dosya yok.")
+            return 1
+        sayfalar = _sayfalar(yol) if yol.suffix.lower() in {".xlsx", ".xlsm"} else None
+        k = kapsama_sorunlari(yol, set(_sayfalar(ana) or []), _kolon_degerleri(ana, KALEM_SAYFASI, 0, 6)) if sayfalar else \
+            {"sorunlar": ["dosya okunamadi / Excel degil"], "tekil_kalem": []}
+        tekil = sorted(_kayit_kimlikleri(yol) - _kayit_kimlikleri(ana)) if sayfalar else []
+        ayni = depo.sha256(yol) == depo.sha256(ana)
+        print(f"Dosya: {yol}\n  ANA ile birebir ayni: {ayni}\n  sayfalar: {sayfalar}\n"
+              f"  ANA'da olmayan Kayit_ID: {len(tekil)} {tekil[:10]}\n  ANA'da olmayan Kalem_ID: {k['tekil_kalem']}\n"
+              f"  kapsama sorunlari: {k['sorunlar'] or 'YOK'}")
+        kapsanir = ayni or (sayfalar is not None and not tekil and not k["sorunlar"])
+        print("SONUC:", "ANA bu dosyayi KAPSIYOR (silinmesi bilgi kaybi dogurmaz)" if kapsanir
+              else "KAPSAMA KANITLANAMADI - silmeyin, gozden gecirin")
+        return 0 if kapsanir else 3
     if a.komut in ("envanter", "temizle"):
         kokler = [Path(k) for k in a.kok] if a.kok else varsayilan_kokler()
         bulunanlar = tara(kokler)
-        rapor_yaz(bulunanlar, Path(a.rapor))
-        print(f"{len(bulunanlar)} ilgili dosya bulundu; rapor: {a.rapor}")
+        rapor = Path(a.rapor) if a.rapor else Path(config.LOGLAR) / f"excel_envanter_{datetime.now():%Y%m%d_%H%M%S}.md"
+        rapor.parent.mkdir(parents=True, exist_ok=True)
+        rapor_yaz(bulunanlar, rapor)
+        print(f"{len(bulunanlar)} ilgili dosya bulundu; rapor: {rapor}")
         for b in bulunanlar:
             print(f"  [{siniflandir(b)}] [{b.get('rol')}] {b['yol']}")
         if a.komut == "envanter":
             return 0
-        silinecek = [b for b in bulunanlar if silinebilir(b)]
-        print(f"\nSilinebilir (kanıtlı artık kopya): {len(silinecek)}")
+        dahil = {x.strip().upper() for x in a.dahil.split(",") if x.strip()}
+        if dahil - {"TEST"}:
+            print(f"--dahil yalniz TEST olabilir (verilen: {sorted(dahil - {'TEST'})}); hicbir sey silinmedi.")
+            return 2
+        silinecek = [b for b in bulunanlar if silinebilir(b, dahil)]
+        print(f"\nSilinebilir (kanitli artik kopya): {len(silinecek)}")
         for b in silinecek:
             print("  -", b["yol"])
         if not a.sil:
-            print("Silmek için: temizle --sil --onay SIL")
+            print("Silmek icin: temizle --sil --onay SIL")
             return 0
         if a.onay != "SIL":
-            print("Onay kelimesi 'SIL' eksik; hiçbir şey silinmedi.")
+            print("Onay kelimesi 'SIL' eksik; hicbir sey silinmedi.")
             return 2
+        from guvenlik import audit_yaz
+
+        silinen_klasorler = set()
         for b in silinecek:
+            audit_yaz("excel_dosyasi_silindi", yol=str(b["yol"]), sha256=b["sha256"], boyut=b["boyut"],
+                      sinif=siniflandir(b), rol=b.get("rol"), kanit="kalip+kapsama" if not dahil else "kalip/ad+kapsama")
             b["yol"].unlink()
+            silinen_klasorler.add(b["yol"].parent)
             print("silindi:", b["yol"])
+        for klasor in bos_uretilmis_klasorleri_sil(silinen_klasorler):
+            print("bos uretilmis yedek klasoru silindi:", klasor)
         return 0
     if a.komut == "geri-don":
         sonuc = depo.yedekten_geri_don(aktor=a.aktor, neden=a.neden, onay=a.onay)

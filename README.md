@@ -67,6 +67,7 @@ Telegram bot anahtarı kaynak koda yazılmaz; Windows ortam değişkeni veya kul
   düşmez (temp, ANA ile aynı diskte değilse hedefin klasörü kullanılır). Başlangıçta `SMART_EXCEL_ROOT / _MAIN_WORKBOOK / _BACKUP_WORKBOOK` satırları yazılır.
 * Geri dönüş yalnız insan/operasyon eylemidir (ANA ile YEDEK'i **takas** eder); yapay zeka, web arayüzü veya Telegram geri dönemez:
   `py -3.12 scripts\excel_operasyon.py geri-don --neden "…" --onay GERI-DON`
+* Windows kurulum ve temizlik adımları: [DEPLOY_WINDOWS.md](DEPLOY_WINDOWS.md); gerçek makinede doğrulama: `py -3.12 scripts\windows_dogrulama.py`.
 * Operasyon aracı: `durum`, `dogrula`, `mutabakat` (Excel ↔ merkez defter farkı, salt-okunur), `defteri-aktar`, `envanter`,
   `temizle`, `geri-don`, `entegre-et` — bkz. [EXCEL_FILE_INVENTORY.md](EXCEL_FILE_INVENTORY.md).
 * Geçmişte üretilmiş eski Excel kopyaları otomatik silinmez; `envanter` kanıtlayıp listeler, `temizle --sil --onay SIL` yalnız kanıtlı

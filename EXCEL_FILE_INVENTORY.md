@@ -1,5 +1,7 @@
 # EXCEL_FILE_INVENTORY
 
+The full step-by-step procedure for the owner's PC is in [DEPLOY_WINDOWS.md](DEPLOY_WINDOWS.md).
+
 ## What could and could not be inventoried
 
 This work was done in a cloud sandbox that has **only the repository** (no `C:\Users\…`, no OneDrive, no
@@ -39,10 +41,12 @@ cd C:\ai-excel
 py -3.12 scripts\excel_operasyon.py durum         # MAIN/BACKUP path, size, SHA-256, leftover temp files
 py -3.12 scripts\excel_operasyon.py dogrula       # both files open and have the expected sheets
 py -3.12 scripts\excel_operasyon.py envanter      # scans BASE_DIR, the MAIN/BACKUP folders and the legacy Gürsar folder
-                                                  #  -> writes EXCEL_FILE_INVENTORY.md (replace this page with the output)
+                                                  #  -> report in loglar\excel_envanter_<time>.md (git-ignored; this page is not overwritten)
 py -3.12 scripts\excel_operasyon.py mutabakat     # MAIN vs central ledger (read-only)
+py -3.12 scripts\excel_operasyon.py kanit "<file>"  # proof that MAIN covers one file (exit 0) or not (exit 3)
 py -3.12 scripts\excel_operasyon.py temizle       # LISTS provably redundant generated copies, deletes nothing
-py -3.12 scripts\excel_operasyon.py temizle --sil --onay SIL   # only after you have read the list
+py -3.12 scripts\excel_operasyon.py temizle --sil --onay SIL   # only after you have read the list; audited; removes emptied generated folders
+py -3.12 scripts\excel_operasyon.py yedek-olustur  # creates the single BACKUP (verified copy of MAIN) when it does not exist yet
 ```
 
 `envanter` records, for each Touche-related workbook or CSV (path, size, modified time, SHA-256, sheets, role, **class**) and decides.

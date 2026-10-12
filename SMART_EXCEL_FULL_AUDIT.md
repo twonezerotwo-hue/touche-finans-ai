@@ -12,7 +12,7 @@ deleted. The inventory/cleanup tooling was built and tested; it must be *run* on
 
 Baseline (original commit, Linux): 6 test modules fail at import (`C:\ai-excel` log path, Telegram token at
 import). With those two obstacles worked around: **126 passed, 21 failed** (`msvcrt` file lock), 1 skipped.
-Now: **296 passed, 1 skipped**, ruff clean, mypy clean for all new/changed CFO and Excel modules.
+Now: **301 passed, 1 skipped**, ruff clean, mypy clean for all new/changed CFO and Excel modules.
 
 Status legend: **Fixed** (code + test), **Mitigated** (made visible/safe, human action still needed), **Open**.
 
@@ -103,4 +103,4 @@ not available here.
 | UX simplicity | 4 | 7 | one question at a time, chips; no user study, desktop viewport only |
 | Performance | 4 | 8 | measured on a 40-entry ledger: chat→draft ≈10 ms, chip click ≈13 ms, project page ≈19 ms (median, no model call); the old path needed an LLM call (timeout 180 s) — not measurable without a model |
 | Maintainability | 4 | 7 | one writer, central config, typed new modules; legacy modules still large, 175 mypy errors there, some hard-coded entities remain |
-| Test coverage | 5 | 8 | 148 → 297 tests (incl. 7 browser tests), baseline could not even be collected on Linux; Windows-specific and LLM paths untested |
+| Test coverage | 5 | 8 | 148 → 302 tests (incl. 7 browser tests), baseline could not even be collected on Linux; Windows-specific and LLM paths untested |

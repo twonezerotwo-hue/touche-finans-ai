@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Envanter/temizlik aracı: yalnız kanıtlanmış artık kopyalar silinir."""
+import json
 import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openpyxl import Workbook, load_workbook
 
@@ -12,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import config
+import guvenlik
 import excel_operasyon as op
 from _ortam import AnaExcelYonlendirme
 from yardimci_excel import tam_akilli_excel
@@ -174,6 +177,66 @@ class EnvanterTemizlikTestleri(unittest.TestCase):
         siniflar = {Path(b["yol"]).name: (op.siniflandir(b), op.silinebilir(b)) for b in self._tara()}
         self.assertEqual(siniflar[temp.name][0], "TEMP")
         self.assertEqual(siniflar["Touche banka hareketleri.csv"], ("ARCHIVE", False))     # csv asla silinmez
+
+    # --- yedek-olustur / kanit / --dahil TEST / denetimli silme ---
+    def test_yedek_olustur_yoksa_olusturur_varsa_ve_farkliysa_onay_ister(self):
+        self.yedek.unlink()
+        self.assertEqual(op.main(["yedek-olustur"]), 0)
+        self.assertTrue(self.yedek.exists())
+        self.assertEqual(op.depo.sha256(self.yedek), op.depo.sha256(self.ana))
+        self.assertEqual(op.main(["yedek-olustur"]), 0)                    # ayni -> yapilacak bir sey yok
+        self.yedek.write_bytes(self.yedek.read_bytes() + b"")              # icerik ayni kalir
+        kayit_ekle(self.yedek, "ONCEKI-SURUM")                              # YEDEK = ANA'dan farkli (onceki surum)
+        farkli = op.depo.sha256(self.yedek)
+        self.assertEqual(op.main(["yedek-olustur"]), 2)                    # onaysiz: onceki surumu ezmez
+        self.assertEqual(op.depo.sha256(self.yedek), farkli)
+        self.assertEqual(op.main(["yedek-olustur", "--onay", "YENILE"]), 0)
+        self.assertEqual(op.depo.sha256(self.yedek), op.depo.sha256(self.ana))
+
+    def test_kanit_komutu_kapsami_raporlar(self):
+        self.assertEqual(op.main(["kanit", str(self.eski_yedekler[0])]), 0)     # ANA ile ayni -> kapsanir
+        self.assertEqual(op.main(["kanit", str(self.tekil)]), 3)                # ANA'da olmayan kayit -> kapsanmaz
+        self.assertEqual(op.main(["kanit", str(self.elle)]), 3)                 # ledger sayfasi yok -> kanitlanamaz
+
+    def test_dahil_test_yalniz_kapsama_kaniti_temizse_siler_ve_denetler(self):
+        denetim = self.root / "denetim.jsonl"
+        temiz = self.root / "Desktop" / "Touche" / "Touche TEST kopya.xlsx"
+        shutil.copy2(self.ana, temiz)
+        sorunlu = self.root / "Desktop" / "Touche" / "Touche TEST eski veri.xlsx"
+        shutil.copy2(self.ana, sorunlu)
+        wb = load_workbook(sorunlu)
+        wb.create_sheet("Gizli Eski Veri")["A1"] = "bu veri ANA'da yok"
+        wb.save(sorunlu)
+        wb.close()
+        kok = ["--kok", str(self.base), "--kok", str(self.root / "Desktop"), "--kok", str(self.yedek.parent)]
+        rapor = ["--rapor", str(self.root / "r.md")]
+        with patch.object(guvenlik, "AUDIT_LOG", denetim), patch.object(guvenlik, "LOGLAR", self.root):
+            self.assertEqual(op.main(["temizle", *kok, *rapor, "--sil", "--onay", "SIL"]), 0)       # --dahil yok
+            self.assertTrue(temiz.exists())                                                           # TEST kendiliginden silinmez
+            self.assertEqual(op.main(["temizle", *kok, *rapor, "--sil", "--onay", "SIL", "--dahil", "UNKNOWN"]), 2)
+            self.assertEqual(op.main(["temizle", *kok, *rapor, "--sil", "--onay", "SIL", "--dahil", "TEST"]), 0)
+        self.assertFalse(temiz.exists())
+        self.assertTrue(sorunlu.exists())                                                             # kanit temiz degil -> kalir
+        silinenler = [json.loads(x) for x in denetim.read_text(encoding="utf-8").splitlines() if x.strip()]
+        self.assertTrue(any(o.get("olay") == "excel_dosyasi_silindi" and o.get("yol") == str(temiz.resolve())
+                            and o.get("sha256") for o in silinenler))
+
+    def test_silme_sonrasi_bos_uretilmis_yedek_klasorleri_kaldirilir_dolu_olanlar_kalir(self):
+        kok = ["--kok", str(self.base), "--kok", str(self.root / "Desktop"), "--kok", str(self.yedek.parent)]
+        self.assertEqual(op.main(["temizle", *kok, "--rapor", str(self.root / "r.md"), "--sil", "--onay", "SIL"]), 0)
+        self.assertFalse((self.base / "firmalar" / "kurulum_yedek").exists())                        # bosaldi -> kalkti
+        self.assertTrue(self.tekil.parent.exists())                                                   # tekil kayitli dosya duruyor
+        self.assertTrue(self.tekil.exists())
+        self.assertTrue(self.yedek.parent.exists())                                                   # gercek YEDEK klasoru dokunulmaz
+
+    def test_rapor_varsayilan_olarak_loglara_yazilir_depo_kokundeki_belgeyi_ezmez(self):
+        cwd_belge = Path("EXCEL_FILE_INVENTORY.md")
+        once = cwd_belge.read_bytes() if cwd_belge.exists() else None
+        kok = ["--kok", str(self.base), "--kok", str(self.root / "Desktop")]
+        self.assertEqual(op.main(["envanter", *kok]), 0)
+        raporlar = list(Path(config.LOGLAR).glob("excel_envanter_*.md"))
+        self.assertTrue(raporlar)
+        self.assertEqual(cwd_belge.read_bytes() if cwd_belge.exists() else None, once)
 
     def test_durum_ve_dogrula(self):
         self.assertEqual(op.main(["durum"]), 0)

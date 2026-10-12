@@ -23,6 +23,8 @@ except ImportError:                                            # pragma: no cove
 
 
 def _tarayici_yolu():
+    """Acik verilen ikili (TOUCHE_TEST_CHROMIUM) > hazir headless_shell (Linux/CI) > None (Playwright'in kendi
+    kurulumu: Windows'ta ``py -3.12 -m playwright install chromium``)."""
     ozel = os.environ.get("TOUCHE_TEST_CHROMIUM")
     if ozel and os.path.exists(ozel):
         return ozel
@@ -35,7 +37,7 @@ YOL = _tarayici_yolu()
 KOMUT = "Göktürk okuluna Gürsar Mimarlık adına Devrim'e 10 bin TL ödeme yapıldı."
 
 
-@unittest.skipIf(sync_playwright is None or YOL is None, "Playwright/Chromium kurulu değil")
+@unittest.skipIf(sync_playwright is None, "Playwright kurulu değil")
 class TarayiciTestleri(CfoTestTemeli):
     @classmethod
     def setUpClass(cls):
@@ -45,7 +47,14 @@ class TarayiciTestleri(CfoTestTemeli):
         cls.port = cls.server.server_address[1]
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.pw = sync_playwright().start()
-        cls.tarayici = cls.pw.chromium.launch(executable_path=YOL, args=["--no-sandbox"])
+        try:
+            secenekler = {"executable_path": YOL} if YOL else {}
+            cls.tarayici = cls.pw.chromium.launch(args=["--no-sandbox"], **secenekler)
+        except Exception as exc:                       # tarayici ikilisi yok: testler atlanir, sunucu kapatilir
+            cls.pw.stop()
+            cls.server.shutdown()
+            cls.server.server_close()
+            raise unittest.SkipTest(f"Chromium acilamadi ({type(exc).__name__}); Windows'ta: py -3.12 -m playwright install chromium")
 
     @classmethod
     def tearDownClass(cls):
