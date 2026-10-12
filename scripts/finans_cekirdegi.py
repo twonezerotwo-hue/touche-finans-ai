@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
-from config import ARSIV, FINANS_DB, LOGLAR, MUHASEBE_EXPORT_DIR, FIRMALAR
+from config import ARSIV, FINANS_DB, LOGLAR, MUHASEBE_EXPORT_DIR, FIRMALAR, ana_excel_yolu
 
 DB_PATH = Path(FINANS_DB)
 SYNC_QUEUE_PATH = Path(LOGLAR) / "finans_sync_queue.jsonl"
@@ -275,10 +275,23 @@ def _donem_acik_mi(con, tarih):
     return not satir or satir["durum"] == "ACIK"
 
 
+GRUP_ICI_ANAHTARLAR = ("intercompany", "grup ici", "grup ici transfer", "sirketler arasi", "sirket arasi")
+
+
 def _hesap_eslesmesi(kayit, tur):
+    """Islem turunu (borc, alacak) hesap cifti ile eslestirir.
+
+    Eslesmesi olmayan veya grup ici transfer olan islem ASLA sessizce gidere yazilmaz;
+    hata verilir ve kayit yapilmaz (grup ici transfer icin ``sirketler_arasi_transfer`` kullanilir).
+    """
     islem = _norm(kayit.get("Islem_Turu") or tur)
     hesap_kasa = _norm(kayit.get("Hesap_Kasa"))
     nakit_hesabi = "100" if "kasa" in hesap_kasa else "102"
+    if any(x in islem for x in GRUP_ICI_ANAHTARLAR):
+        raise ValueError(
+            "Grup içi transfer gider olarak yazılamaz; 'Grup içi transfer' ekranından "
+            "kaynak ve hedef faaliyet fişleriyle birlikte oluşturun. Kayıt yapılmadı."
+        )
     if "alacak duzeltme" in islem or "mahsup" in islem:
         return "600", "120"
     if "kredi kullanimi" in islem:
@@ -309,7 +322,10 @@ def _hesap_eslesmesi(kayit, tur):
         return "740", nakit_hesabi
     if "gelir" in islem:
         return nakit_hesabi, "649"
-    return "799", "102"
+    raise ValueError(
+        f"'{kayit.get('Islem_Turu') or tur}' işlem türü için muhasebe hesap eşlemesi tanımlı değil; "
+        "bilinmeyen tür gider olarak yazılmaz. Kayıt yapılmadı."
+    )
 
 
 def fis_taslaklari(hazir):
@@ -362,9 +378,16 @@ def fis_taslaklari(hazir):
                 "pb": pb,
                 "kur_mikro": max(1, int(kur * 1_000_000)),
                 "kaynak": str(kayit.get("_dosya_adi") or hazir.get("kaynak_metin") or ""),
+                "is_kalemi_id": str(kayit.get("Is_Kalemi_ID") or "").strip() or None,
                 "satirlar": satirlar,
             })
     return taslaklar
+
+
+def _is_kalemi_kolonu_hazirla(con):
+    """fisler.is_kalemi_id (nullable, ek) yoksa ekler; var olan veriye dokunmaz."""
+    if not any(r[1] == "is_kalemi_id" for r in con.execute("PRAGMA table_info(fisler)").fetchall()):
+        con.execute("ALTER TABLE fisler ADD COLUMN is_kalemi_id TEXT")
 
 
 def finans_kaydi_yaz(hazir, onaylayan="sistem"):
@@ -410,6 +433,9 @@ def finans_kaydi_yaz(hazir, onaylayan="sistem"):
                 "INSERT INTO fis_satirlari(fis_id,satir_no,hesap_kodu,borc_kurus,alacak_kurus,aciklama) VALUES(?,?,?,?,?,?)",
                 [(fis["fis_id"], no, s["hesap"], s["borc"], s["alacak"], s["aciklama"]) for no, s in enumerate(fis["satirlar"], 1)],
             )
+            if fis.get("is_kalemi_id"):
+                _is_kalemi_kolonu_hazirla(con)
+                con.execute("UPDATE fisler SET is_kalemi_id=? WHERE fis_id=?", (fis["is_kalemi_id"], fis["fis_id"]))
         con.execute(
             "INSERT OR IGNORE INTO belge_butunlugu(belge_id,sha256,finansal_hash,kaynak,kayit_zamani,dogrulama_durumu) "
             "VALUES(?,?,?,?,?,?)",
@@ -804,47 +830,48 @@ def sistem_kontrolu():
 
 
 def holding_excelini_aktar():
-    """Mevcut Holding ledger satirlarini bir defaya mahsus merkezi deftere aktarir."""
+    """Merkezi deftere yansimamis Holding Excel satirlarini deftere aktarir.
+
+    Excel'e DOKUNMAZ ve idempotenttir (``LEGACY-<Kayit_ID>`` belge kimligi, UNIQUE(belge_id, kayit_sira)).
+    Uygulamanin kendi yazdigi satirlar (Kaynak_Belge_ID dolu) deftere kendi belge kimligiyle zaten
+    islendigi icin ATLANIR; aksi halde ayni tutar iki kez sayilirdi.
+    """
     from openpyxl import load_workbook
 
     firma = FIRMALAR["touche_holding"]
     ledger = firma["ana_ledger"]
-    wb = load_workbook(firma["excel"], data_only=False, read_only=True)
-    ws = wb[ledger["sayfa"]]
     s = ledger["sutunlar"]
+    idx = {ad: ord(h) - ord("A") for ad, h in s.items() if len(h) == 1}
+    son_sutun = max(idx.values()) + 1
     aktarilan, atlanan, hatalar = 0, 0, []
+    wb = load_workbook(ana_excel_yolu(), data_only=False, read_only=True)
     try:
-        for row in range(ledger["ilk_veri_satiri"], (ws.max_row or 0) + 1):
-            kayit_id = str(ws[f"{s['Kayit_ID']}{row}"].value or "").strip()
-            tutar = ws[f"{s['Tutar']}{row}"].value
-            durum = str(ws[f"{s['Durum']}{row}"].value or "")
-            if not kayit_id or not tutar or _norm(durum) != "aktif":
+        ws = wb[ledger["sayfa"]]
+        for v in ws.iter_rows(min_row=ledger["ilk_veri_satiri"], max_col=son_sutun, values_only=True):
+            def h(ad, v=v):
+                i = idx.get(ad)
+                return v[i] if i is not None and i < len(v) else None
+
+            kayit_id = str(h("Kayit_ID") or "").strip()
+            tutar = h("Tutar")
+            if not kayit_id or not tutar or _norm(h("Durum")) != "aktif" or str(h("Kaynak_Belge_ID") or "").strip():
                 atlanan += 1
                 continue
-            faaliyet_adi = ws[f"{s['Faaliyet']}{row}"].value
+            faaliyet_adi = h("Faaliyet")
             faaliyet = faaliyet_anahtari_bul(faaliyet_adi)
-            belge_id = f"LEGACY-{kayit_id}"
             kayit = {
-                "Tarih": ws[f"{s['Tarih']}{row}"].value,
-                "Faaliyet": faaliyet_adi,
-                "Proje": ws[f"{s['Proje']}{row}"].value,
-                "Cari_Tipi": ws[f"{s['Cari_Tipi']}{row}"].value,
-                "Cari": ws[f"{s['Cari']}{row}"].value,
-                "Islem_Turu": ws[f"{s['Islem_Turu']}{row}"].value,
-                "Hesap_Kasa": ws[f"{s['Hesap_Kasa']}{row}"].value,
-                "Tutar": tutar,
-                "PB": ws[f"{s['PB']}{row}"].value or "TL",
-                "Kur": ws[f"{s['Kur']}{row}"].value or 1,
-                "Vade": ws[f"{s['Vade']}{row}"].value,
-                "Aciklama": ws[f"{s['Aciklama']}{row}"].value,
-                "_dosya_adi": ws[f"{s['Belge_Referans']}{row}"].value or "Mevcut Holding Excel",
+                "Tarih": h("Tarih"), "Faaliyet": faaliyet_adi, "Proje": h("Proje"),
+                "Cari_Tipi": h("Cari_Tipi"), "Cari": h("Cari"), "Islem_Turu": h("Islem_Turu"),
+                "Hesap_Kasa": h("Hesap_Kasa"), "Tutar": tutar, "PB": h("PB") or "TL", "Kur": h("Kur") or 1,
+                "Vade": h("Vade"), "Aciklama": h("Aciklama"),
+                "_dosya_adi": h("Belge_Referans") or "Mevcut Holding Excel",
             }
-            hazir = {"belge_id": belge_id, "firma_key": faaliyet, "tur": "finans_belgesi", "veri": {"kayitlar": [kayit]}}
+            hazir = {"belge_id": f"LEGACY-{kayit_id}", "firma_key": faaliyet, "tur": "finans_belgesi",
+                     "veri": {"kayitlar": [kayit]}}
             try:
                 once = sistem_kontrolu()["fisler"]
                 finans_kaydi_yaz(hazir, "excel_migrasyonu")
-                sonra = sistem_kontrolu()["fisler"]
-                aktarilan += max(0, sonra - once)
+                aktarilan += max(0, sistem_kontrolu()["fisler"] - once)
             except Exception as exc:
                 hatalar.append(f"{kayit_id}: {exc}")
     finally:
@@ -863,7 +890,7 @@ def holding_faaliyetlerini_uzlastir(aktor="sistem"):
     veritabanini_hazirla()
     firma = FIRMALAR["touche_holding"]
     ledger = firma["ana_ledger"]
-    wb = load_workbook(firma["excel"], data_only=False, read_only=True)
+    wb = load_workbook(ana_excel_yolu(), data_only=False, read_only=True)
     ws = wb[ledger["sayfa"]]
     s = ledger["sutunlar"]
     eslemeler = {}

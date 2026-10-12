@@ -3,12 +3,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string
 
-from config import FIRMALAR
+from config import FIRMALAR, ana_excel_yolu
 from faaliyet_sema import anahtar
 
 
@@ -16,7 +15,7 @@ def _kayitlari_oku(firma_key):
     firma = FIRMALAR[firma_key]
     master = FIRMALAR["touche_holding"]
     ledger = master["ana_ledger"]
-    yol = Path(master["excel"])
+    yol = ana_excel_yolu()
     wb = load_workbook(yol, read_only=True, data_only=False)
     try:
         ws = wb[ledger["sayfa"]]

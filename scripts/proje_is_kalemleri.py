@@ -4,15 +4,13 @@
 from __future__ import annotations
 
 import math
-import os
-import shutil
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from openpyxl import load_workbook
 
-from config import FIRMALAR
-from excel_yazici import _gecici_exceli_dogrula, _gecici_yol, _yedek_al
+from config import ana_excel_yolu
+from excel_deposu import guvenli_degistir
 from finans_cekirdegi import _baglanti, faaliyet_anahtari_bul, veritabani_yedekle
 from guvenlik import audit_yaz
 from kayit_kilidi import kilitli
@@ -35,7 +33,7 @@ DURUMLAR = {"Onaylı", "Taslak", "İptal"}
 
 
 def _excel_yolu() -> Path:
-    return Path(FIRMALAR["touche_holding"]["excel"])
+    return ana_excel_yolu()
 
 
 def _norm(deger) -> str:
@@ -66,22 +64,26 @@ def _tutar_kurus(deger: float) -> int:
     return int((Decimal(str(deger)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def _satir_verisi(ws, satir: int) -> dict:
-    metraj = float(ws[f"G{satir}"].value or 0)
-    satis_bf = float(ws[f"H{satir}"].value or 0)
-    maliyet_turu = str(ws[f"J{satir}"].value or "Birim fiyat").strip()
-    maliyet_bf = float(ws[f"K{satir}"].value or 0)
+def _satir_dict(v) -> dict:
+    """A..R sütun değerlerinden (v[0]=A) iş kalemi sözlüğü üretir."""
+    def h(i):                      # i: 0-tabanli sutun
+        return v[i] if i < len(v) else None
+
+    metraj = float(h(6) or 0)
+    satis_bf = float(h(7) or 0)
+    maliyet_turu = str(h(9) or "Birim fiyat").strip()
+    maliyet_bf = float(h(10) or 0)
     ciro = metraj * satis_bf
     maliyet = maliyet_bf if _norm(maliyet_turu) == "toplam sabit" else metraj * maliyet_bf
     fark = ciro - maliyet
     return {
-        "kalem_id": str(ws[f"A{satir}"].value or "").strip(),
-        "faaliyet": str(ws[f"B{satir}"].value or "").strip(),
-        "faaliyet_key": faaliyet_anahtari_bul(ws[f"B{satir}"].value),
-        "proje": str(ws[f"C{satir}"].value or "").strip(),
-        "maliyet_grubu": str(ws[f"D{satir}"].value or "").strip(),
-        "is_kalemi": str(ws[f"E{satir}"].value or "").strip(),
-        "birim": str(ws[f"F{satir}"].value or "").strip(),
+        "kalem_id": str(h(0) or "").strip(),
+        "faaliyet": str(h(1) or "").strip(),
+        "faaliyet_key": faaliyet_anahtari_bul(h(1)),
+        "proje": str(h(2) or "").strip(),
+        "maliyet_grubu": str(h(3) or "").strip(),
+        "is_kalemi": str(h(4) or "").strip(),
+        "birim": str(h(5) or "").strip(),
         "metraj": metraj,
         "satis_birim_fiyati": satis_bf,
         "ciro": round(ciro, 2),
@@ -90,18 +92,25 @@ def _satir_verisi(ws, satir: int) -> dict:
         "maliyet": round(maliyet, 2),
         "brut_fark": round(fark, 2),
         "brut_marj": round(fark / ciro * 100, 2) if ciro else 0,
-        "durum": str(ws[f"O{satir}"].value or "").strip(),
-        "not": str(ws[f"P{satir}"].value or "").strip(),
-        "hakedis_kayit_id": str(ws[f"Q{satir}"].value or "").strip(),
-        "gider_kayit_id": str(ws[f"R{satir}"].value or "").strip(),
+        "durum": str(h(14) or "").strip(),
+        "not": str(h(15) or "").strip(),
+        "hakedis_kayit_id": str(h(16) or "").strip(),
+        "gider_kayit_id": str(h(17) or "").strip(),
     }
 
 
+def _satir_verisi(ws, satir: int) -> dict:
+    """Tek satir (normal, yazilabilir calisma kitabi icin)."""
+    satirlar = list(ws.iter_rows(min_row=satir, max_row=satir, min_col=1, max_col=18, values_only=True))
+    return _satir_dict(satirlar[0] if satirlar else ())
+
+
 def _kalemler(ws) -> list[dict]:
+    """Tum satirlari TEK gecişte okur (salt-okunur sayfada hucre adresiyle erisim O(n^2)'dir)."""
     sonuc = []
-    for satir in range(ILK_SATIR, SON_SATIR + 1):
-        if str(ws[f"A{satir}"].value or "").strip():
-            sonuc.append(_satir_verisi(ws, satir))
+    for v in ws.iter_rows(min_row=ILK_SATIR, max_row=SON_SATIR, min_col=1, max_col=18, values_only=True):
+        if str(v[0] or "").strip():
+            sonuc.append(_satir_dict(v))
     return sonuc
 
 
@@ -182,16 +191,6 @@ def _defteri_senkronla(toplamlar: dict[str, float]) -> None:
                 raise RuntimeError(f"{kayit_id} güncellemesi merkez defteri dengesiz bıraktı.")
 
 
-def _geri_al(yedek: Path, hedef: Path) -> None:
-    gecici = _gecici_yol(hedef)
-    try:
-        shutil.copy2(yedek, gecici)
-        _gecici_exceli_dogrula(gecici, ["03_Kayıt Merkezi", SAYFA])
-        os.replace(gecici, hedef)
-    finally:
-        gecici.unlink(missing_ok=True)
-
-
 @kilitli
 def guncelle(kalem_id: str, degisiklikler: dict, aktor: str) -> dict:
     kalem_id = str(kalem_id or "").strip()
@@ -216,51 +215,38 @@ def guncelle(kalem_id: str, degisiklikler: dict, aktor: str) -> dict:
         else:
             temiz[alan] = str(deger or "").strip()[:500]
 
-    yol = _excel_yolu()
-    wb = load_workbook(yol, data_only=False, keep_links=True)
-    gecici = None
-    excel_yedek = db_yedek = None
-    try:
+    durum = {}
+
+    def degistir(wb):
         if SAYFA not in wb.sheetnames:
             raise ValueError(f"Ana Excel'de {SAYFA} sayfası bulunamadı.")
         ws = wb[SAYFA]
         hedef_satir = next((r for r in range(ILK_SATIR, SON_SATIR + 1) if str(ws[f"A{r}"].value or "").strip() == kalem_id), None)
         if not hedef_satir:
             raise ValueError(f"İş kalemi bulunamadı: {kalem_id}")
-        once = _satir_verisi(ws, hedef_satir)
+        durum["once"] = _satir_verisi(ws, hedef_satir)
         for alan, deger in temiz.items():
             ws[f"{ALANLAR[alan]}{hedef_satir}"] = deger
-        sonra = _satir_verisi(ws, hedef_satir)
-        faaliyet_ozeti = _ozet([x for x in _kalemler(ws) if x["faaliyet_key"] == sonra["faaliyet_key"]])
-        toplamlar = _bagli_toplamlar(ws)
-        if hasattr(wb, "calculation"):
-            wb.calculation.calcMode = "auto"
-            wb.calculation.fullCalcOnLoad = True
-            wb.calculation.forceFullCalc = True
+        durum["sonra"] = _satir_verisi(ws, hedef_satir)
+        durum["ozet"] = _ozet([x for x in _kalemler(ws) if x["faaliyet_key"] == durum["sonra"]["faaliyet_key"]])
+        durum["toplamlar"] = _bagli_toplamlar(ws)
+        return {"basari": True}
 
-        excel_yedek = _yedek_al("touche_holding")
-        db_yedek = veritabani_yedekle()
-        gecici = _gecici_yol(yol)
-        wb.save(gecici)
-        wb.close()
-        wb = None
-        _gecici_exceli_dogrula(gecici, ["03_Kayıt Merkezi", SAYFA])
-        os.replace(gecici, yol)
-        gecici = None
-        try:
-            _defteri_senkronla(toplamlar)
-        except Exception:
-            _geri_al(excel_yedek, yol)
-            raise
-    finally:
-        if wb is not None:
-            wb.close()
-        if gecici is not None:
-            Path(gecici).unlink(missing_ok=True)
+    def defteri_esitle(_sonuc):
+        # ANA yerlestirildikten sonra calisir; hata verirse ANA otomatik geri alinir.
+        veritabani_yedekle()
+        _defteri_senkronla(durum["toplamlar"])
 
+    sonuc = guvenli_degistir(
+        degistir, aktor=str(aktor), kaynak="proje_is_kalemleri.guncelle",
+        beklenen_sayfalar=["03_Kayıt Merkezi", SAYFA], ek_adim=defteri_esitle,
+        degisim_izni={SAYFA: set(ALANLAR.values())},
+        audit_ek=lambda s: {"kalem_id": kalem_id, "once": durum["once"], "sonra": durum["sonra"],
+                            "bagli_toplamlar": durum["toplamlar"]},
+    )
     audit_yaz(
         "proje_is_kalemi_guncellendi", aktor=str(aktor), kalem_id=kalem_id,
-        once=once, sonra=sonra, excel_yedek=str(excel_yedek), db_yedek=str(db_yedek),
-        bagli_toplamlar=toplamlar,
+        once=durum["once"], sonra=durum["sonra"], islem_id=sonuc.get("islem_id"),
+        bagli_toplamlar=durum["toplamlar"],
     )
-    return {"basari": True, "kalem": sonra, "ozet": faaliyet_ozeti}
+    return {"basari": True, "kalem": durum["sonra"], "ozet": durum["ozet"]}

@@ -8,16 +8,12 @@ mevcut açık borçlarla eşleşen vade komutları merkezi defter ve tek master 
 
 from __future__ import annotations
 
-import os
-import shutil
 import sqlite3
-import uuid
 from datetime import date, datetime
-from pathlib import Path
 
-from openpyxl import load_workbook
-
-from config import FINANS_DB, FIRMALAR
+from config import FIRMALAR, ana_excel_yolu
+import finans_cekirdegi as _cekirdek
+from excel_deposu import guvenli_degistir
 from finans_cekirdegi import _norm, faaliyet_anahtari_bul, veritabani_yedekle
 from guvenlik import audit_yaz
 from kayit_kilidi import kilitli
@@ -136,94 +132,82 @@ def _excel_eslesmeleri(wb, hedefler):
 
 @kilitli
 def acik_borc_vadesi_guncelle(hedefler, yeni_vade, aktor="cfo_asistani"):
-    """Eşleşen açık borç vadelerini DB ve tek master Excel'de atomik olarak günceller."""
+    """Eşleşen açık borç vadelerini DB ve tek master Excel'de atomik olarak günceller.
+
+    Excel yazımı ``excel_deposu`` ile yapılır (tek ANA + tek YEDEK). SQLite güncellemesi
+    ANA yerleştirildikten sonra aynı mantıksal işlemde çalışır; DB adımı başarısız
+    olursa ANA otomatik olarak YEDEK'ten geri alınır ve DB işlemi geri sarılır.
+    """
     hedefler = _hedefleri_hazirla(hedefler)
     if isinstance(yeni_vade, datetime):
         yeni_vade = yeni_vade.date()
     if not isinstance(yeni_vade, date):
         raise ValueError("Geçerli bir vade tarihi gerekli.")
 
-    excel_yolu = Path(FIRMALAR["touche_holding"]["excel"])
+    excel_yolu = ana_excel_yolu()
     if not excel_yolu.exists():
         raise FileNotFoundError(f"Master Excel bulunamadı: {excel_yolu}")
 
     db_yedek = veritabani_yedekle()
-    yedek_klasoru = Path(FIRMALAR["touche_holding"]["yedek_klasoru"])
-    yedek_klasoru.mkdir(parents=True, exist_ok=True)
-    excel_yedek = yedek_klasoru / f"{excel_yolu.stem}_vade_{datetime.now():%Y%m%d_%H%M%S_%f}.xlsx"
-    shutil.copy2(excel_yolu, excel_yedek)
-    gecici = excel_yolu.parent / f".{excel_yolu.stem}.{uuid.uuid4().hex}.tmp{excel_yolu.suffix}"
-    wb = None
+    ledger = FIRMALAR["touche_holding"]["ana_ledger"]
+    vade_sutunu = ledger["sutunlar"]["Vade"]
     con = None
-    excel_degisti = False
     try:
-        con = sqlite3.connect(FINANS_DB, timeout=30)
+        con = sqlite3.connect(_cekirdek.DB_PATH, timeout=30)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("BEGIN IMMEDIATE")
         db_satirlari = _db_eslesmeleri(con, hedefler)
 
-        wb = load_workbook(excel_yolu)
-        excel_satirlari = _excel_eslesmeleri(wb, hedefler)
-        vade_sutunu = FIRMALAR["touche_holding"]["ana_ledger"]["sutunlar"]["Vade"]
-        for satirlar in excel_satirlari.values():
-            for satir in satirlar:
-                hucre = wb["03_Kayıt Merkezi"][f"{vade_sutunu}{satir}"]
-                hucre.value = datetime.combine(yeni_vade, datetime.min.time())
-                # Master dosyadaki diğer tarih hücreleriyle aynı Excel biçimi.
-                hucre.number_format = r"dd\.mm\.yyyy"
-        wb.save(gecici)
-        wb.close()
-        wb = None
-
-        kontrol = load_workbook(gecici, read_only=False, data_only=False)
-        try:
-            ws = kontrol["03_Kayıt Merkezi"]
+        def degistir(wb):
+            excel_satirlari = _excel_eslesmeleri(wb, hedefler)
+            ws = wb[ledger["sayfa"]]
             for satirlar in excel_satirlari.values():
                 for satir in satirlar:
-                    deger = ws[f"{vade_sutunu}{satir}"].value
-                    deger = deger.date() if isinstance(deger, datetime) else deger
-                    if deger != yeni_vade:
-                        raise RuntimeError(f"Geçici Excel vade doğrulaması başarısız: satır {satir}")
-        finally:
-            kontrol.close()
+                    hucre = ws[f"{vade_sutunu}{satir}"]
+                    hucre.value = datetime.combine(yeni_vade, datetime.min.time())
+                    # Master dosyadaki diğer tarih hücreleriyle aynı Excel biçimi.
+                    hucre.number_format = r"dd\.mm\.yyyy"
+            return {"basari": True,
+                    "excel_satirlari": sorted({r for satirlar in excel_satirlari.values() for r in satirlar})}
 
-        for fis_id in db_satirlari:
-            con.execute("UPDATE fisler SET vade=? WHERE fis_id=?", (yeni_vade.isoformat(), fis_id))
-        sayi = con.execute(
-            f"SELECT COUNT(*) adet FROM fisler WHERE fis_id IN ({','.join('?' for _ in db_satirlari)}) AND vade=?",
-            [*db_satirlari, yeni_vade.isoformat()],
-        ).fetchone()["adet"]
-        if sayi != len(db_satirlari):
-            raise RuntimeError("Merkezi defter vade doğrulaması başarısız.")
+        def db_adimi(sonuc):
+            for fis_id in db_satirlari:
+                con.execute("UPDATE fisler SET vade=? WHERE fis_id=?", (yeni_vade.isoformat(), fis_id))
+            sayi = con.execute(
+                f"SELECT COUNT(*) adet FROM fisler WHERE fis_id IN ({','.join('?' for _ in db_satirlari)}) AND vade=?",
+                [*db_satirlari, yeni_vade.isoformat()],
+            ).fetchone()["adet"]
+            if sayi != len(db_satirlari):
+                raise RuntimeError("Merkezi defter vade doğrulaması başarısız.")
+            con.commit()
 
-        os.replace(gecici, excel_yolu)
-        excel_degisti = True
-        con.commit()
+        sonuc = guvenli_degistir(
+            degistir, aktor=aktor, kaynak="finans_komutlari.acik_borc_vadesi_guncelle",
+            beklenen_sayfalar=[ledger["sayfa"]], ek_adim=db_adimi,
+            degisim_izni={ledger["sayfa"]: {vade_sutunu}},
+            audit_ek=lambda s: {"vade": yeni_vade.isoformat(), "hedefler": hedefler,
+                                "fisler": sorted(db_satirlari), "excel_satirlari": s.get("excel_satirlari")},
+        )
         sonuc = {
             "basari": True,
             "vade": yeni_vade.isoformat(),
             "hedefler": hedefler,
             "fisler": sorted(db_satirlari),
-            "excel_satirlari": sorted({r for satirlar in excel_satirlari.values() for r in satirlar}),
+            "excel_satirlari": sonuc["excel_satirlari"],
             "db_yedek": str(db_yedek),
-            "excel_yedek": str(excel_yedek),
+            "islem_id": sonuc["islem_id"],
         }
         audit_yaz("asistan_vade_guncelleme", aktor=aktor, **sonuc)
         return sonuc
     except Exception as exc:
         if con is not None:
             con.rollback()
-        if excel_degisti:
-            shutil.copy2(excel_yedek, excel_yolu)
         audit_yaz(
             "asistan_vade_guncelleme_hatasi", aktor=aktor, vade=str(yeni_vade),
-            hedefler=hedefler, hata=str(exc), db_yedek=str(db_yedek), excel_yedek=str(excel_yedek),
+            hedefler=hedefler, hata=str(exc), db_yedek=str(db_yedek),
         )
         raise
     finally:
-        if wb is not None:
-            wb.close()
         if con is not None:
             con.close()
-        gecici.unlink(missing_ok=True)

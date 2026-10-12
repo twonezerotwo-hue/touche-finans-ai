@@ -20,7 +20,9 @@ if str(BASE_DIR / "scripts") not in sys.path:
     sys.path.insert(0, str(BASE_DIR / "scripts"))
 
 from finans_danismani import asistana_sor, faaliyetler, karar_panosu, senaryo_hesapla  # noqa: E402
-from config import MASTER_EXCEL  # noqa: E402
+from config import ana_excel_yolu, yedek_excel_yolu  # noqa: E402
+import cfo_yonlendirici  # noqa: E402
+import excel_deposu  # noqa: E402
 from kurumsal_finans import (  # noqa: E402
     banka_hareketi_eslestir, banka_mutabakat_adaylari, banka_mutabakat_listesi,
     butce_sapma_raporu, cari_yaslandirma, donem_kapanis_kontrolu,
@@ -174,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(govde)
 
     def _excel_indir(self):
-        yol = Path(MASTER_EXCEL)
+        yol = ana_excel_yolu()
         if not yol.exists():
             return self._json({"hata": "Ana Excel bulunamadı."}, 404)
         govde = yol.read_bytes()
@@ -280,11 +282,16 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/faaliyetler":
             return self._json({"faaliyetler": faaliyetler()})
         if parsed.path == "/api/excel/bilgi":
-            yol = Path(MASTER_EXCEL)
+            yol = ana_excel_yolu()
+            yedek = yedek_excel_yolu()
             return self._json({
                 "ad": yol.name, "yol": str(yol) if session.get("yerel") else "Ana bilgisayardaki tek master Excel",
                 "mevcut": yol.exists(), "boyut": yol.stat().st_size if yol.exists() else 0,
                 "yerel": bool(session.get("yerel")),
+                "yedek_mevcut": yedek.exists(), "yedek_boyut": yedek.stat().st_size if yedek.exists() else 0,
+                "yedek_degisim": __import__("datetime").datetime.fromtimestamp(yedek.stat().st_mtime).isoformat(timespec="seconds")
+                if yedek.exists() else None,
+                "yedek_yol": str(yedek) if session.get("yerel") else "Tek yedek (bir önceki sürüm)",
             })
         if parsed.path == "/api/excel/indir":
             return self._excel_indir()
@@ -413,6 +420,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cfo_get(self, path, q, session):
         """CFO Operating System GET uclari; eslesme yoksa None doner."""
+        if path in {"/api/holding-ozeti", "/api/faaliyet-detay", "/api/proje-listesi", "/api/proje-detay",
+                    "/api/cfo/taslak", "/api/kayit-gecmisi"}:
+            if path == "/api/kayit-gecmisi" and not rol_yetki.izin_var(self._rol(session), "audit.goruntule"):
+                raise PermissionError("Yetkisiz.")
+            return cfo_yonlendirici.veri_isle(path, q, session, self._kapsam_izinli)
+        if path == "/api/excel/durum":
+            d = excel_deposu.durum()
+            yerel = bool(session.get("yerel"))
+            ozet = lambda x: {"var": x["var"], "boyut": x["boyut"], "degisim": x["degisim"],  # noqa: E731
+                              "sha256": (x["sha256"] or "")[:16], **({"yol": x["yol"]} if yerel else {})}
+            return {"ana": ozet(d["ana"]), "yedek": ozet(d["yedek"]), "ana_yedek_ayni": d["ana_yedek_ayni"],
+                    "gecici_dosya_sayisi": len(d["gecici_dosyalar"])}
         if path == "/api/kpi":
             return _ekran_kpi(self._faaliyet_q(q, session), self._body_profil(q))
         if path == "/api/kirilim":
@@ -532,6 +551,10 @@ class Handler(BaseHTTPRequestHandler):
                         "taslak_kapat": True, "degisiklik_yapildi": False,
                         "kanitlar": [f"Taslak: {reddedilen['belge_id']}"], "aksiyonlar": [],
                     })
+                # --- CFO katmani: deterministik sihirbaz / okuma sorgusu (LLM'siz). None -> mevcut hat ---
+                cfo_yaniti = cfo_yonlendirici.sohbet_isle(body, session, self._rol(session))
+                if cfo_yaniti is not None:
+                    return self._json(cfo_yaniti)
                 if aktif_taslak and sade.startswith("duzelt"):
                     taslak = sohbet_taslagi_duzelt(
                         aktif_taslak, soru, session.get("kimlik") or "yerel_kullanici"
@@ -591,10 +614,12 @@ class Handler(BaseHTTPRequestHandler):
                     degisiklik_onayli=excel_degisikligi_onayli,
                 )
                 return self._json(sonuc)
+            if yol == "/api/cfo/adim":
+                return self._json(cfo_yonlendirici.adim_isle(self._body(), session, self._rol(session)))
             if yol == "/api/excel/ac":
                 if not session.get("yerel"):
                     return self._json({"hata": "Excel yalnızca ana bilgisayarda doğrudan açılabilir."}, 403)
-                excel_yolu = Path(MASTER_EXCEL)
+                excel_yolu = ana_excel_yolu()
                 if not excel_yolu.exists():
                     raise FileNotFoundError("Ana Excel bulunamadı.")
                 os.startfile(str(excel_yolu))
@@ -776,10 +801,25 @@ class Handler(BaseHTTPRequestHandler):
         log.info("%s - %s", self.address_string(), fmt % args)
 
 
+def baslangic_ozeti(host="127.0.0.1", port=8765) -> list[str]:
+    """Calisan surecin hangi kaynak agacini ve hangi tek ANA/YEDEK Excel'i kullandigini acikca yazar."""
+    from config import BASE_DIR, TEMP_DIR
+
+    return [
+        f"Touche Finans Asistani: http://{host}:{port}",
+        f"SMART_EXCEL_ROOT={BASE_DIR}",
+        f"SMART_EXCEL_MAIN_WORKBOOK={ana_excel_yolu()}",
+        f"SMART_EXCEL_BACKUP_WORKBOOK={yedek_excel_yolu()}",
+        f"SMART_EXCEL_TEMP_DIR={TEMP_DIR}",
+        f"SMART_EXCEL_CODE={Path(__file__).resolve().parent.parent}",
+    ]
+
+
 def calistir(host="127.0.0.1", port=None):
     port = int(port or os.environ.get("FINANS_UI_PORT", "8765"))
     sunucu = ThreadingHTTPServer((host, port), Handler)
-    print(f"Touche Finans Asistani: http://{host}:{port}", flush=True)
+    for satir in baslangic_ozeti(host, port):
+        print(satir, flush=True)
     try:
         sunucu.serve_forever()
     except KeyboardInterrupt:

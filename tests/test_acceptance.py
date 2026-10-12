@@ -3,6 +3,7 @@
 muhasebe raporlari, yetkilendirme, belge guvenligi ve migration."""
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -297,9 +298,11 @@ class RbacApiTestleri(_Tabani):
 
 class MigrationTestleri(unittest.TestCase):
     def test_gercek_db_kopyasinda_migration_veri_kaybi_yok(self):
-        kaynak = Path(r"C:\ai-excel\veri\finans.db")
-        if not kaynak.exists():
-            self.skipTest("Gercek finans.db bulunamadi")
+        # Uretim verisi testlere SADECE acik izinle ve KOPYA olarak verilir:
+        #   TOUCHE_URETIM_DB_KOPYASI=<finans.db kopyasi>
+        kaynak = Path(os.environ.get("TOUCHE_URETIM_DB_KOPYASI", ""))
+        if not os.environ.get("TOUCHE_URETIM_DB_KOPYASI") or not kaynak.exists():
+            self.skipTest("TOUCHE_URETIM_DB_KOPYASI tanimli degil; uretim DB kopyasi gerekli")
         import sqlite3
 
         with tempfile.TemporaryDirectory() as d:

@@ -13,11 +13,10 @@ import os
 import shutil
 import subprocess
 import zipfile
-from pathlib import Path
 
 from openpyxl import load_workbook
 
-from config import FIRMALAR, WITAN_REMOTE_ENABLED
+from config import FIRMALAR, WITAN_REMOTE_ENABLED, ana_excel_yolu
 
 
 FORMULA_ERRORS = ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#NULL!", "#SPILL!", "#CALC!")
@@ -26,7 +25,7 @@ FORMULA_ERRORS = ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#NUM!", "#NULL!", "#
 def yerel_excel_kontrol(firma_key):
     if firma_key not in FIRMALAR:
         raise ValueError("Faaliyet bulunamadı.")
-    path = Path(FIRMALAR[firma_key]["excel"])
+    path = ana_excel_yolu()
     sorunlar, uyarilar = [], []
     if not path.exists():
         return {"durum": "FAIL", "sorunlar": ["Excel dosyası bulunamadı."], "uyarilar": [], "istatistik": {}}
@@ -93,7 +92,7 @@ def witan_excel_kontrol(firma_key):
     exe = shutil.which("witan")
     if not exe:
         return {"durum": "SKIPPED", "sebep": "witan komutu bulunamadı."}
-    path = Path(FIRMALAR[firma_key]["excel"])
+    path = ana_excel_yolu()
     sonuc = subprocess.run(
         [exe, "--stateless", "xlsx", "--json", "lint", str(path)],
         capture_output=True, text=True, timeout=180, shell=False,

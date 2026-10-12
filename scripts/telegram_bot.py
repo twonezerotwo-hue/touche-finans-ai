@@ -535,7 +535,7 @@ async def buton_cevabi(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if akis['tur'] == 'faaliyet':
                     key = faaliyet_olustur(**akis['veri'])
                     KULLANICI_FIRMA[chat_id] = key
-                    sonuc = f"{FIRMALAR[key]['ad']} açıldı. Faaliyet Excel’i ve Holding tanımları kaydedildi.\nExcel: {FIRMALAR[key]['excel']}\nBu faaliyet seçili; işlem gönderebilirsiniz."
+                    sonuc = f"{FIRMALAR[key]['ad']} açıldı. Faaliyet Excel’i ve Holding tanımları kaydedildi.\nExcel: tek ana Smart Excel\nBu faaliyet seçili; işlem gönderebilirsiniz."
                 elif akis['tur'] == 'cari':
                     cari_olustur(akis['firma_key'], **akis['veri'])
                     sonuc = 'Cari, faaliyet ve Holding tanımlarına eklendi.'

@@ -24,6 +24,8 @@ from excel_yazici import yaz, belge_kaydini_iptal_et
 from master_data import master_data_oku
 from telegram_sorgu import finans_ozeti
 from test_phase1 import _holding_olustur, _gursar_olustur
+from _ortam import AnaExcelYonlendirme
+import excel_deposu
 
 
 class FaaliyetTestleri(unittest.TestCase):
@@ -40,12 +42,8 @@ class FaaliyetTestleri(unittest.TestCase):
         w['99_Ayarlar']['T6'] = 'Tahsilat'
         w.save(self.holding)
         w.close()
-        FIRMALAR['touche_holding']['excel'] = str(self.holding)
-        FIRMALAR['touche_holding']['yedek_klasoru'] = self.root/'backup_holding'
-        FIRMALAR['gursar_mimarlik']['excel'] = str(self.gursar)
-        FIRMALAR['gursar_mimarlik']['yedek_klasoru'] = self.root/'backup_gursar'
+        self.yonlendirme = AnaExcelYonlendirme(self.holding, self.root/'yedek'/'holding - YEDEK.xlsx').baslat()
         self.patches = [patch.object(yonetim,'FAALIYET_REGISTRY',self.root/'registry.json'),
-                        patch.object(yonetim,'FIRMALAR_DIR',self.root/'firms'),
                         patch.object(guvenlik,'AUDIT_LOG',self.root/'audit.jsonl'),
                         patch.object(bot,'TELEGRAM_STATE',self.root/'telegram.json'),
                         patch.object(bot,'YONETIM_AKIS',{}),
@@ -58,6 +56,7 @@ class FaaliyetTestleri(unittest.TestCase):
     def cleanup(self):
         for p in reversed(self.patches):
             p.stop()
+        self.yonlendirme.bitir()
         FIRMALAR.clear()
         FIRMALAR.update(self.saved)
         self.temp.cleanup()
@@ -157,7 +156,7 @@ class FaaliyetTestleri(unittest.TestCase):
             if Path(dst) == self.holding:
                 raise PermissionError('holding locked')
             return original(src,dst)
-        with patch('excel_yazici.os.replace',side_effect=failing):
+        with patch.object(excel_deposu.os,'replace',side_effect=failing):
             result = yaz(key,self.record(),'FAIL-1')
         self.assertFalse(result['basari'])
         self.assertIn('tüm Excel pencerelerini kapatın', result['hata'])

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import shutil
 import sys
 import tempfile
 import unittest
@@ -13,6 +12,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import finans_cekirdegi as fk
 import proje_is_kalemleri as pik
+from _ortam import AnaExcelYonlendirme
 
 
 class ProjeIsKalemleriTestleri(unittest.TestCase):
@@ -33,11 +33,10 @@ class ProjeIsKalemleriTestleri(unittest.TestCase):
         ws["O6"], ws["P6"], ws["Q6"], ws["R6"] = "Onaylı", "not", "HAK-001", "GID-001"
         wb.save(self.yol)
         wb.close()
-        self.excel_patch = patch.dict(pik.FIRMALAR["touche_holding"], {"excel": str(self.yol)})
-        self.excel_patch.start()
+        self.excel_patch = AnaExcelYonlendirme(self.yol, Path(self.temp.name) / "yedek" / "master - YEDEK.xlsx").baslat()
 
     def tearDown(self):
-        self.excel_patch.stop()
+        self.excel_patch.bitir()
         self.temp.cleanup()
 
     def test_listele_formulleri_python_ile_hesaplar(self):
@@ -48,14 +47,7 @@ class ProjeIsKalemleriTestleri(unittest.TestCase):
         self.assertEqual(sonuc["ozet"]["brut_fark"], 2000)
 
     def test_guncelle_formulleri_korur_ve_bagli_toplami_senkronlar(self):
-        yedek = Path(self.temp.name) / "backup.xlsx"
-
-        def backup(_):
-            shutil.copy2(self.yol, yedek)
-            return yedek
-
-        with patch.object(pik, "_yedek_al", side_effect=backup), \
-             patch.object(pik, "veritabani_yedekle", return_value=Path(self.temp.name) / "db.bak"), \
+        with patch.object(pik, "veritabani_yedekle", return_value=Path(self.temp.name) / "db.bak"), \
              patch.object(pik, "_defteri_senkronla") as sync, \
              patch.object(pik, "audit_yaz"):
             sonuc = pik.guncelle("K-001", {"metraj": "12,5", "not": "güncel"}, "test")

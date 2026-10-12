@@ -49,12 +49,18 @@
     for (let i = 0; i < 6; i++) wrap.appendChild(el("div", { class: "cfo-skeleton" }));
     return wrap;
   }
+  /* Icerik ayri bir kutuya cizilir; yalniz EN SON gezinme hala gecerliyse yerine konur. Boylece
+     iskelet (skeleton) kalmaz ve yavas bir onceki yukleme yeni sayfanin ustune yazamaz. */
+  let yuklemeSirasi = 0;
   async function withLoad(container, loader) {
+    const sira = ++yuklemeSirasi;
     container.replaceChildren(skeleton());
+    const kutu = el("div", { class: "cfo-icerik" });
     try {
-      await loader(container);
+      await loader(kutu);
+      if (sira === yuklemeSirasi) container.replaceChildren(...kutu.childNodes);
     } catch (err) {
-      container.replaceChildren(el("div", { class: "cfo-error", text: `${t("error")}: ${err.message}` }));
+      if (sira === yuklemeSirasi) container.replaceChildren(el("div", { class: "cfo-error", text: `${t("error")}: ${err.message}` }));
     }
   }
 
@@ -97,7 +103,7 @@
     search.addEventListener("input", () => { state.q = search.value.toLowerCase(); state.page = 1; draw(); });
     toolbar.appendChild(search);
     columns.forEach((c) => {
-      const lbl = el("label", { style: "font-size:12px;color:#5c7268" });
+      const lbl = el("label", { class: "cfo-col-label" });
       const box = el("input", { type: "checkbox" });
       box.checked = !c.hidden;
       lbl.appendChild(box); lbl.appendChild(document.createTextNode(" " + c.label));
@@ -152,7 +158,7 @@
           else td.textContent = c.format ? c.format(r) : (r[c.key] ?? "");
           tr.appendChild(td);
         });
-        if (opts.onRow) { tr.style.cursor = "pointer"; tr.addEventListener("click", () => opts.onRow(r)); }
+        if (opts.onRow) { tr.classList.add("cfo-row-link"); tr.addEventListener("click", () => opts.onRow(r)); }
         tbody.appendChild(tr);
       });
       tableWrap.replaceChildren(el("table", { class: "cfo-table" }, [el("thead", {}, thead), tbody]));
@@ -176,21 +182,41 @@
   const app = () => document.getElementById("cfoApp");
   const mainEl = () => document.querySelector("main");
 
+  /* Ana alanlar: CFO Asistani -> Holding -> Faaliyetler -> Projeler -> Kayit / Islemler; digerleri mevcut gorunumler. */
   const VIEWS = [
-    ["panel", "nav_panel"], ["holding", "nav_holding"], ["aktivite", "nav_aktivite"],
-    ["proje", "nav_proje"], ["nakit", "nav_nakit"], ["alacak", "nav_alacak"],
+    ["panel", "nav_asistan"], ["holding", "nav_holding"], ["aktivite", "nav_aktivite"],
+    ["proje", "nav_proje"], ["islemler", "nav_islemler"], ["nakit", "nav_nakit"], ["alacak", "nav_alacak"],
     ["borc", "nav_borc"], ["butce", "nav_butce"], ["senaryo", "nav_senaryo"],
     ["belge", "nav_belge"], ["ai", "nav_ai"], ["rapor", "nav_rapor"], ["yonetim", "nav_yonetim"],
   ];
+  /* Detay sayfalari menude yok; ust menu ogesini aktif gosterir. */
+  const UST_MENU = { faaliyetdetay: "aktivite", projedetay: "proje" };
   let aktif = "panel";
+
+  /* --- URL hash yonlendirme: #/holding  #/faaliyet/<key>  #/proje/<faaliyet>/<proje> --- */
+  function hashOlustur(view, params) {
+    params = params || [];
+    const yol = { faaliyetdetay: "faaliyet", projedetay: "proje" }[view] || view;
+    return "#/" + [yol, ...params.map((x) => encodeURIComponent(x))].join("/");
+  }
+  function hashCoz(h) {
+    const parcalar = (h || "").replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+    if (!parcalar.length) return { view: "panel", params: [] };
+    const [ad, ...params] = parcalar;
+    if (ad === "faaliyet" && params.length) return { view: "faaliyetdetay", params };
+    if (ad === "proje" && params.length >= 2) return { view: "projedetay", params };
+    const bilinen = VIEWS.map((v) => v[0]);
+    return { view: bilinen.includes(ad) ? ad : "panel", params: [] };
+  }
 
   function renderNav() {
     const nav = $("cfoNav");
     if (!nav) return;
+    const vurgu = UST_MENU[aktif] || aktif;
     nav.replaceChildren(...VIEWS.map(([id, key]) => {
-      const btn = el("button", { type: "button", text: t(key) });
-      btn.setAttribute("aria-current", id === aktif ? "true" : "false");
-      btn.addEventListener("click", () => show(id));
+      const btn = el("button", { type: "button", text: t(key), "data-view": id });
+      btn.setAttribute("aria-current", id === vurgu ? "true" : "false");
+      btn.addEventListener("click", () => git(id));
       return btn;
     }));
   }
@@ -199,8 +225,16 @@
     return el("div", {}, [el("h2", { text: baslik }), el("p", { class: "cfo-sub", text: alt || t("money_note") })]);
   }
 
-  async function show(view) {
+  let sonHash = null;
+  function git(view, params) {
+    const yeni = hashOlustur(view, params);
+    if (location.hash === yeni) { render(view, params || []); return; }
+    location.hash = yeni;                       // hashchange -> render
+  }
+
+  async function render(view, params) {
     aktif = view;
+    sonHash = location.hash;
     renderNav();
     const a = app(), m = mainEl();
     if (view === "panel") {
@@ -212,7 +246,22 @@
     if (m) m.hidden = true;
     if (!a) return;
     a.hidden = false;
-    await withLoad(a, RENDER[view] || ((root) => { root.appendChild(header(t("empty"), "")); }));
+    a.setAttribute("data-view", view);
+    const cizici = RENDER[view];
+    await withLoad(a, (root) => (cizici ? cizici(root, params || []) : root.appendChild(header(t("empty"), ""))));
+    window.scrollTo(0, 0);
+  }
+
+  function hashtenCiz() {
+    const { view, params } = hashCoz(location.hash);
+    return render(view, params);
+  }
+  window.addEventListener("hashchange", () => { if (location.hash !== sonHash) hashtenCiz(); });
+
+  /* Asistani acar ve (istege bagli) bir mesaj gonderir: "Bu projeye odeme ekle" gibi. */
+  function asistanaSor(metin) {
+    git("panel");
+    if (metin && typeof window.ask === "function") setTimeout(() => window.ask(metin), 50);
   }
 
   function lineChart(points, esik) {
@@ -236,35 +285,98 @@
     return canvas;
   }
   C.lineChart = lineChart;
+  C.git = git;
+  C.asistanaSor = asistanaSor;
+  C.header = header;
 
   const RENDER = {};
-  window.CFOshow = show;
+  window.CFOshow = (view, params) => git(view, params);
   window.CFOregister = (id, fn) => { RENDER[id] = fn; };
-  window.CFOinit = () => show("panel");
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => show("panel"));
-  else show("panel");
+  window.CFOinit = () => hashtenCiz();
+  /* Gorunumler (asagidaki bloklar) ayni betikte sonradan kaydedilir; ilk cizim betik tamamen
+     degerlendirildikten sonra yapilmalidir, yoksa derin baglanti (#/proje/...) bos sayfa cizer. */
+  const baslat = () => setTimeout(hashtenCiz, 0);
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", baslat);
+  else baslat();
 })();
 
-/* === Gorunum tanimlari: Holding / Faaliyet / Proje / Nakit === */
+/* === Gorunum tanimlari: Holding -> Faaliyet -> Proje (tiklanabilir, deterministik metrikler) === */
 (function () {
   const C = window.CFO;
-  const { t, el, api, qs, dataTable, kpiCard, fmtKurus, fmtPct, lineChart } = C;
+  const { t, el, api, qs, dataTable, kpiCard, fmtKurus, fmtPct } = C;
   const kayit = window.CFOregister;
-  const marjBadge = (r) => r.marj_durum;
-  const marjText = (r) => r.brut_marj_metin;
-  function drill(faaliyetKey, view) {
-    const sel = document.getElementById("faaliyet");
-    if (sel && faaliyetKey) sel.value = faaliyetKey;
-    window.CFOshow(view || "holding");
-  }
-  window.CFO_drill = drill;
+  const DNA = "DATA_NOT_AVAILABLE";
 
+  /* Metrik sozlugu {durum, metin, aciklama} -> KPI karti. Hesaplanamayan metrik uydurulmaz. */
+  function metrikKarti(baslik, m, ek) {
+    const yok = !m || m.durum === DNA;
+    const kart = kpiCard(baslik, yok ? DNA : m.metin, (m && m.aciklama) || ek || "");
+    kart.setAttribute("data-metrik", baslik);
+    if (yok) kart.classList.add("cfo-kpi-yok");
+    kart.classList.add("cfo-card-static");
+    return kart;
+  }
+  function metrikIzgarasi(mt, sozlesme) {
+    const g = el("div", { class: "cfo-kpis", "data-bolum": "metrikler" });
+    if (sozlesme) g.appendChild(metrikKarti("Sözleşme / gelir değeri", mt.sozlesme_gelir_degeri, mt.sozlesme_gelir_degeri && mt.sozlesme_gelir_degeri.kaynak));
+    g.append(
+      metrikKarti("Kazanılan gelir", mt.kazanilan_gelir, "Hakediş/gelir tahakkuku · tahsilat değildir"),
+      metrikKarti("Tahsil edilen", mt.tahsil_edilen, "Alacağı kapatan nakit girişi"),
+      metrikKarti("Kalan alacak", mt.kalan_alacak, "Kazanılan − tahsil edilen"),
+      metrikKarti("Gider (maliyet)", mt.gider, "Gider tahakkuku · ödeme değildir"),
+      metrikKarti("Ödenen", mt.odenen, "Kasa/banka çıkışı · gider değildir"),
+      metrikKarti("Açık borç", mt.acik_borc, "Gider − ödenen"),
+      metrikKarti("Kâr / zarar", mt.kar_zarar, "Gelir − gider · nakit değildir"),
+      metrikKarti("Kâr marjı", mt.kar_marji, mt.kar_marji && mt.kar_marji.durum === DNA ? "" : "Kâr / gelir"),
+      metrikKarti("Net nakit", mt.net_nakit, "Tahsilat − ödeme · kâr değildir"),
+    );
+    return g;
+  }
+  function uyariKutusu(uyarilar) {
+    const kutu = el("div", { "data-bolum": "uyarilar" });
+    (uyarilar || []).forEach((u) => kutu.appendChild(el("div", { class: "cfo-insight WARNING" }, [el("div", { class: "d", text: u })])));
+    return kutu;
+  }
+  function kirinti(...ogeler) {
+    const nav = el("nav", { class: "cfo-breadcrumb", "aria-label": "Konum" });
+    ogeler.forEach((o, i) => {
+      if (i) nav.appendChild(document.createTextNode(" › "));
+      nav.appendChild(o.git
+        ? el("a", { href: o.git, text: o.metin, onclick: (e) => { e.preventDefault(); location.hash = o.git; } })
+        : el("strong", { text: o.metin }));
+    });
+    return nav;
+  }
+  const hashFaaliyet = (key) => "#/faaliyet/" + encodeURIComponent(key);
+  const hashProje = (key, proje) => "#/proje/" + encodeURIComponent(key) + "/" + encodeURIComponent(proje);
+  const para = (k) => (k === null || k === undefined ? DNA : fmtKurus(k));
+
+  function eylemSatiri(oneki, tur) {
+    const bar = el("div", { class: "cfo-toolbar", "data-bolum": "eylemler" });
+    tur.forEach(([etiket, cumle]) => bar.appendChild(el("button", { type: "button", class: "ghost", text: etiket,
+      onclick: () => C.asistanaSor(`${oneki} ${cumle}`.trim()) })));
+    return bar;
+  }
+  const cariTablosu = (rows) => dataTable([
+    { key: "cari", label: "Cari" },
+    { key: "odenen_kurus", label: "Ödenen", num: true, format: (r) => fmtKurus(r.odenen_kurus) },
+    { key: "acik_borc_kurus", label: "Açık borç", num: true, format: (r) => fmtKurus(r.acik_borc_kurus) },
+    { key: "tahsil_edilen_kurus", label: "Tahsil edilen", num: true, format: (r) => fmtKurus(r.tahsil_edilen_kurus) },
+    { key: "kalan_alacak_kurus", label: "Kalan alacak", num: true, format: (r) => fmtKurus(r.kalan_alacak_kurus) },
+  ], rows, { empty: "Bu kapsamda cari hareketi yok." });
+  const islemTablosu = (rows) => dataTable([
+    { key: "tarih", label: "Tarih" }, { key: "tur", label: "Tür" }, { key: "cari", label: "Cari" },
+    { key: "proje", label: "Proje" }, { key: "tutar_kurus", label: t("th_tutar"), num: true, format: (r) => r.tutar_metin },
+    { key: "aciklama", label: "Açıklama" },
+  ], rows, { empty: "Henüz işlem yok.", per: 10 });
+
+  /* ---------- HOLDING ---------- */
   kayit("holding", async (root) => {
-    const kpi = await api("/api/kpi?" + qs());
-    const kirilim = await api("/api/kirilim?" + qs({ boyut: "sirket" }));
+    const [kpi, ozet] = await Promise.all([api("/api/kpi?" + qs()), api("/api/holding-ozeti")]);
     root.appendChild(el("h2", { text: "Holding Konsolidasyonu" }));
-    root.appendChild(el("p", { class: "cfo-sub", text: t("money_note") }));
-    const kpis = el("div", { class: "cfo-kpis" });
+    root.appendChild(el("p", { class: "cfo-sub", text: t("money_note") + " · grup içi bakiyeler elimine edilmiştir" }));
+    root.appendChild(uyariKutusu(ozet.uyarilar));
+    const kpis = el("div", { class: "cfo-kpis", "data-bolum": "likidite" });
     kpis.append(
       kpiCard(t("kpi_nakit"), fmtKurus(kpi.kullanilabilir_nakit_kurus), "Toplam " + fmtKurus(kpi.toplam_nakit_kurus), null, kpi.nakit_trend_yuzde),
       kpiCard(t("kpi_korunacak"), fmtKurus(kpi.korunacak_nakit_kurus), kpi.rezerv_gun + " gün rezerv"),
@@ -276,36 +388,123 @@
       kpiCard(t("kpi_min13"), fmtKurus(kpi.min_13_hafta_nakit_kurus), "13 hafta en düşük kapanış"),
     );
     root.appendChild(kpis);
-    root.appendChild(el("h3", { text: "Şirket kırılımı · " + t("drilldown") }));
-    root.appendChild(dataTable([
-      { key: "ad", label: t("th_ad") },
-      { key: "ciro_kurus", label: t("th_ciro"), num: true, format: (r) => r.ciro_metin },
-      { key: "maliyet_kurus", label: t("th_maliyet"), num: true, format: (r) => r.maliyet_metin },
-      { key: "brut_kar_kurus", label: t("th_brut_kar"), num: true, format: (r) => r.brut_kar_metin },
-      { key: "brut_marj_yuzde", label: t("th_marj"), num: true, badge: marjBadge, badgeText: marjText },
-      { key: "alacak_kurus", label: t("th_alacak"), num: true, format: (r) => fmtKurus(r.alacak_kurus) },
-      { key: "borc_kurus", label: t("th_borc"), num: true, format: (r) => fmtKurus(r.borc_kurus) },
-    ], kirilim.kalemler, { onRow: (r) => drill(r.anahtar) }));
+    root.appendChild(el("h3", { text: "Konsolide sonuç (defter kayıtlarından)" }));
+    root.appendChild(metrikIzgarasi(ozet.konsolide, false));
+    root.appendChild(el("h3", { text: "Faaliyetler · " + t("drilldown") }));
+    root.appendChild(el("div", { "data-bolum": "faaliyetler" }, dataTable([
+      { key: "faaliyet", label: "Faaliyet", format: (r) => r.faaliyet },
+      { key: "gelir", label: "Kazanılan gelir", num: true, format: (r) => r.metrikler.kazanilan_gelir.metin },
+      { key: "gider", label: "Gider", num: true, format: (r) => r.metrikler.gider.metin },
+      { key: "kar", label: "Kâr / zarar", num: true, format: (r) => r.metrikler.kar_zarar.metin },
+      { key: "tahsil", label: "Tahsil edilen", num: true, format: (r) => r.metrikler.tahsil_edilen.metin },
+      { key: "odenen", label: "Ödenen", num: true, format: (r) => r.metrikler.odenen.metin },
+      { key: "alacak", label: "Kalan alacak", num: true, format: (r) => r.metrikler.kalan_alacak.metin },
+    ], ozet.faaliyetler.map((f) => ({ ...f, faaliyet: f.faaliyet })), { onRow: (r) => { location.hash = hashFaaliyet(r.faaliyet_key); }, sortKey: null })));
+    root.appendChild(el("h3", { text: "Son işlemler" }));
+    root.appendChild(islemTablosu(ozet.son_islemler));
   });
 
+  /* ---------- FAALIYETLER (liste) ---------- */
   kayit("aktivite", async (root) => {
-    const alan = await api("/api/kirilim?" + qs({ boyut: "faaliyet_alani" }));
-    const sirket = await api("/api/kirilim?" + qs({ boyut: "sirket" }));
-    root.appendChild(el("h2", { text: "Faaliyet Alanları" }));
-    root.appendChild(el("p", { class: "cfo-sub", text: "Faaliyet alanı → şirket drill-down" }));
-    root.appendChild(el("h3", { text: "Faaliyet alanı kârlılığı" }));
-    root.appendChild(dataTable([
-      { key: "ad", label: t("th_ad") },
-      { key: "ciro_kurus", label: t("th_ciro"), num: true, format: (r) => r.ciro_metin },
-      { key: "maliyet_kurus", label: t("th_maliyet"), num: true, format: (r) => r.maliyet_metin },
-      { key: "brut_marj_yuzde", label: t("th_marj"), num: true, badge: marjBadge, badgeText: marjText },
-    ], alan.kalemler));
-    root.appendChild(el("h3", { text: "Şirketler" }));
-    root.appendChild(dataTable([
-      { key: "ad", label: t("th_ad") },
-      { key: "ciro_kurus", label: t("th_ciro"), num: true, format: (r) => r.ciro_metin },
-      { key: "brut_marj_yuzde", label: t("th_marj"), num: true, badge: marjBadge, badgeText: marjText },
-    ], sirket.kalemler, { onRow: (r) => drill(r.anahtar) }));
+    const ozet = await api("/api/holding-ozeti");
+    root.appendChild(el("h2", { text: "Faaliyetler" }));
+    root.appendChild(el("p", { class: "cfo-sub", text: "Bir faaliyete tıklayın: gelir, gider, ödeme, tahsilat, alacak, borç ve projeleri açılır." }));
+    root.appendChild(el("div", { "data-bolum": "faaliyetler" }, dataTable([
+      { key: "faaliyet", label: "Faaliyet" },
+      { key: "gelir", label: "Kazanılan gelir", num: true, format: (r) => r.metrikler.kazanilan_gelir.metin },
+      { key: "gider", label: "Gider", num: true, format: (r) => r.metrikler.gider.metin },
+      { key: "kar", label: "Kâr / zarar", num: true, format: (r) => r.metrikler.kar_zarar.metin },
+      { key: "kayit_sayisi", label: "Kayıt", num: true },
+    ], ozet.faaliyetler, { onRow: (r) => { location.hash = hashFaaliyet(r.faaliyet_key); } })));
+  });
+
+  /* ---------- FAALIYET DETAY ---------- */
+  kayit("faaliyetdetay", async (root, params) => {
+    const [key] = params;
+    const d = await api("/api/faaliyet-detay?faaliyet=" + encodeURIComponent(key));
+    root.appendChild(kirinti({ metin: "Holding", git: "#/holding" }, { metin: d.faaliyet }));
+    root.appendChild(el("h2", { text: d.faaliyet, "data-baslik": "faaliyet" }));
+    root.appendChild(el("p", { class: "cfo-sub", text: "Faaliyet özeti · " + t("money_note") }));
+    root.appendChild(uyariKutusu(d.uyarilar));
+    root.appendChild(metrikIzgarasi(d.metrikler, false));
+    root.appendChild(eylemSatiri(d.faaliyet, [["Ödeme ekle", "için ödeme ekle"], ["Gider ekle", "için gider ekle"], ["Tahsilat ekle", "için tahsilat ekle"]]));
+    root.appendChild(el("h3", { text: "Projeler · " + t("drilldown") }));
+    root.appendChild(el("div", { "data-bolum": "projeler" }, dataTable([
+      { key: "proje", label: "Proje" },
+      { key: "gelir", label: "Kazanılan gelir", num: true, format: (r) => r.kazanilan_gelir.metin },
+      { key: "gider", label: "Gider", num: true, format: (r) => r.gider.metin },
+      { key: "kar", label: "Kâr / zarar", num: true, format: (r) => r.kar_zarar.metin },
+      { key: "tahsil", label: "Tahsil edilen", num: true, format: (r) => r.tahsil_edilen.metin },
+      { key: "odenen", label: "Ödenen", num: true, format: (r) => r.odenen.metin },
+      { key: "alacak", label: "Kalan alacak", num: true, format: (r) => r.kalan_alacak.metin },
+    ], d.projeler, { onRow: (r) => { location.hash = hashProje(d.faaliyet_key, r.proje); }, empty: "Bu faaliyette tanımlı proje yok." })));
+    root.appendChild(el("h3", { text: "Cari bakiyeleri" }));
+    root.appendChild(cariTablosu(d.cari_bakiyeleri));
+    root.appendChild(el("h3", { text: "Son işlemler" }));
+    root.appendChild(islemTablosu(d.son_islemler));
+  });
+
+  /* ---------- PROJELER (liste) ---------- */
+  kayit("proje", async (root) => {
+    const l = await api("/api/proje-listesi");
+    root.appendChild(el("h2", { text: "Projeler" }));
+    root.appendChild(el("p", { class: "cfo-sub", text: "Bir projeye tıklayın: finansal durumu, iş kalemleri ve hareketleri açılır." }));
+    root.appendChild(el("div", { "data-bolum": "projeler" }, dataTable([
+      { key: "proje", label: "Proje" }, { key: "faaliyet", label: "Faaliyet" },
+      { key: "gelir", label: "Kazanılan gelir", num: true, format: (r) => r.kazanilan_gelir.metin },
+      { key: "gider", label: "Gider", num: true, format: (r) => r.gider.metin },
+      { key: "kar", label: "Kâr / zarar", num: true, format: (r) => r.kar_zarar.metin },
+      { key: "tahsil", label: "Tahsil edilen", num: true, format: (r) => r.tahsil_edilen.metin },
+      { key: "odenen", label: "Ödenen", num: true, format: (r) => r.odenen.metin },
+      { key: "alacak", label: "Kalan alacak", num: true, format: (r) => r.kalan_alacak.metin },
+    ], l.projeler, { onRow: (r) => { location.hash = hashProje(r.faaliyet_key, r.proje); }, empty: "Tanımlı proje yok." })));
+  });
+
+  /* ---------- PROJE DETAY ---------- */
+  kayit("projedetay", async (root, params) => {
+    const [key, proje] = params;
+    const d = await api("/api/proje-detay?faaliyet=" + encodeURIComponent(key) + "&proje=" + encodeURIComponent(proje));
+    root.appendChild(kirinti({ metin: "Holding", git: "#/holding" }, { metin: d.faaliyet, git: hashFaaliyet(d.faaliyet_key) }, { metin: d.proje }));
+    root.appendChild(el("h2", { text: d.proje, "data-baslik": "proje" }));
+    root.appendChild(el("p", { class: "cfo-sub", "data-faaliyet": d.faaliyet_key, text: "Faaliyet: " + d.faaliyet + " · " + t("money_note") }));
+    root.appendChild(uyariKutusu(d.uyarilar));
+    root.appendChild(metrikIzgarasi(d.metrikler, true));
+    const tanim = el("details", { class: "cfo-tanim" }, [el("summary", { text: "Kavramlar" }),
+      el("p", { class: "cfo-sub", text: Object.values(d.tanimlar).join(" ") })]);
+    root.appendChild(tanim);
+    root.appendChild(eylemSatiri(`${d.faaliyet} ${d.proje}`, [["Ödeme ekle", "için ödeme ekle"], ["Gider ekle", "için gider ekle"], ["Tahsilat ekle", "için tahsilat ekle"]]));
+    const o = d.is_kalemi_ozeti;
+    root.appendChild(el("h3", { text: `İş kalemleri · ${o.toplam} kalem · ${o.acik} açık · ${o.odemesi_tamamlanan} ödemesi tamamlanan` }));
+    root.appendChild(el("p", { class: "cfo-sub", text: o.tanim }));
+    root.appendChild(el("div", { "data-bolum": "is-kalemleri" }, dataTable([
+      { key: "ad", label: t("th_kalem") }, { key: "grup", label: "Grup" },
+      { key: "onay_durumu", label: "Onay" }, { key: "ilerleme", label: "Durum" },
+      { key: "gelir_degeri_kurus", label: "Gelir değeri", num: true, format: (r) => fmtKurus(r.gelir_degeri_kurus) },
+      { key: "maliyet_plani_kurus", label: "Planlanan maliyet", num: true, format: (r) => fmtKurus(r.maliyet_plani_kurus) },
+      { key: "gerceklesen_gider_kurus", label: "Gerçekleşen gider", num: true, format: (r) => fmtKurus(r.gerceklesen_gider_kurus) },
+      { key: "odenen_kurus", label: "Ödenen", num: true, format: (r) => fmtKurus(r.odenen_kurus) },
+      { key: "kalan_odeme_kurus", label: "Kalan ödeme", num: true, format: (r) => fmtKurus(r.kalan_odeme_kurus) },
+      { key: "butce_kalan_kurus", label: "Plan kalan", num: true, format: (r) => fmtKurus(r.butce_kalan_kurus) },
+    ], d.is_kalemleri, { empty: "Bu projede tanımlı iş kalemi yok." })));
+    root.appendChild(el("h3", { text: "Cari bakiyeleri" }));
+    root.appendChild(cariTablosu(d.cari_bakiyeleri));
+    root.appendChild(el("h3", { text: "Son işlemler" }));
+    root.appendChild(el("div", { "data-bolum": "son-islemler" }, islemTablosu(d.son_islemler)));
+  });
+
+  /* ---------- KAYIT / ISLEMLER ---------- */
+  kayit("islemler", async (root) => {
+    const ozet = await api("/api/holding-ozeti");
+    root.appendChild(el("h2", { text: "Kayıt / İşlemler" }));
+    root.appendChild(el("p", { class: "cfo-sub", text: "Doğal dille yazın ya da adım adım ilerleyin. Excel'e yalnız şifreli onaydan sonra yazılır." }));
+    const bar = el("div", { class: "cfo-toolbar", "data-bolum": "yeni-kayit" });
+    [["Yeni ödeme", "yeni ödeme"], ["Yeni gider", "yeni gider"], ["Yeni tahsilat", "yeni tahsilat"],
+     ["Yeni hakediş", "yeni hakediş"]].forEach(([etiket, mesaj]) =>
+      bar.appendChild(el("button", { type: "button", text: etiket, onclick: () => C.asistanaSor(mesaj) })));
+    bar.appendChild(el("button", { type: "button", class: "ghost", text: "CFO Asistanı'nı aç", onclick: () => C.asistanaSor("") }));
+    root.appendChild(bar);
+    root.appendChild(el("h3", { text: "Son işlemler (holding)" }));
+    root.appendChild(islemTablosu(ozet.son_islemler));
   });
 })();
 
@@ -316,32 +515,6 @@
   const kayit = window.CFOregister;
   const marjBadge = (r) => r.marj_durum;
   const marjText = (r) => r.brut_marj_metin;
-
-  kayit("proje", async (root) => {
-    const proje = await api("/api/proje-karlilik?" + qs());
-    const kalem = await api("/api/is-kalemleri-karlilik?" + qs());
-    root.appendChild(el("h2", { text: "Proje Kârlılığı" }));
-    root.appendChild(el("p", { class: "cfo-sub", text: "Proje → iş kalemi drill-down" }));
-    root.appendChild(el("h3", { text: "Projeler" }));
-    root.appendChild(dataTable([
-      { key: "ad", label: t("th_ad") },
-      { key: "ciro_kurus", label: t("th_ciro"), num: true, format: (r) => r.ciro_metin },
-      { key: "maliyet_kurus", label: t("th_maliyet"), num: true, format: (r) => r.maliyet_metin },
-      { key: "brut_kar_kurus", label: t("th_brut_kar"), num: true, format: (r) => r.brut_kar_metin },
-      { key: "brut_marj_yuzde", label: t("th_marj"), num: true, badge: marjBadge, badgeText: marjText },
-    ], proje.kalemler));
-    root.appendChild(el("h3", { text: "İş kalemleri · bütçe / taahhüt / gerçekleşen / tahmin (EAC)" }));
-    root.appendChild(dataTable([
-      { key: "is_kalemi", label: t("th_kalem") }, { key: "maliyet_grubu", label: "Grup" },
-      { key: "birim", label: t("th_birim") }, { key: "metraj", label: t("th_metraj"), num: true },
-      { key: "ciro_kurus", label: t("th_ciro"), num: true, format: (r) => r.ciro_metin },
-      { key: "butce_kurus", label: t("th_butce"), num: true, format: (r) => r.butce_metin },
-      { key: "taahhut_kurus", label: t("th_taahhut"), num: true, format: (r) => fmtKurus(r.taahhut_kurus) },
-      { key: "gerceklesen_kurus", label: t("th_gerceklesen"), num: true, format: (r) => r.gerceklesen_metin },
-      { key: "tahmin_kurus", label: t("th_tahmin"), num: true, format: (r) => r.tahmin_metin },
-      { key: "brut_marj_yuzde", label: t("th_marj"), num: true, badge: marjBadge, badgeText: marjText },
-    ], kalem.kalemler));
-  });
 
   kayit("nakit", async (root) => {
     const n = await api("/api/nakit/13hafta?" + qs());
@@ -355,7 +528,7 @@
       kpiCard("Risk", n.risk ? "VAR" : "YOK", n.risk ? t("risk_risky") : t("risk_safe")),
     );
     root.appendChild(kutu);
-    root.appendChild(el("div", { style: "overflow-x:auto" }, lineChart(n.haftalar.map((h) => ({ ad: h.hafta_no, v: h.kapanis_kurus })), n.esik_kurus)));
+    root.appendChild(el("div", { class: "cfo-scroll-x" }, lineChart(n.haftalar.map((h) => ({ ad: h.hafta_no, v: h.kapanis_kurus })), n.esik_kurus)));
     root.appendChild(el("h3", { text: "Haftalık detay" }));
     root.appendChild(dataTable([
       { key: "hafta_no", label: t("th_hafta"), num: true },
@@ -540,7 +713,7 @@
     root.appendChild(el("h2", { text: "Belge Otomasyonu" }));
     root.appendChild(el("p", { class: "cfo-sub", text: "UPLOAD → PARSE → OCR → EXTRACTION → SINIFLANDIRMA → DUPLICATE → MATCHING → REVIEW → APPROVAL → POSTING" }));
     const card = el("div", { class: "cfo-card" });
-    const taslak = el("textarea", { rows: "4", placeholder: "Belge metni (fatura/dekont metni)…", style: "width:100%;border:1px solid #d9e4dc;border-radius:8px;padding:8px" });
+    const taslak = el("textarea", { rows: "4", placeholder: "Belge metni (fatura/dekont metni)…", class: "cfo-input" });
     const dosyaAdi = el("input", { type: "text", placeholder: "Dosya adı (örn: fatura.pdf)", value: "fatura.pdf" });
     const proje = el("input", { type: "text", placeholder: "Proje (opsiyonel)" });
     const btn = el("button", { type: "button", text: "Hattı çalıştır" });
@@ -579,9 +752,9 @@
     ])));
     root.appendChild(liste);
     const card = el("div", { class: "cfo-card" });
-    const soru = el("input", { type: "text", placeholder: t("ai_placeholder"), style: "width:100%;border:1px solid #d9e4dc;border-radius:8px;padding:8px" });
+    const soru = el("input", { type: "text", placeholder: t("ai_placeholder"), class: "cfo-input" });
     const btn = el("button", { type: "button", text: t("btn_sor") });
-    const cevap = el("div", { style: "margin-top:12px" });
+    const cevap = el("div", { class: "cfo-mt" });
     card.append(soru, el("div", { class: "cfo-toolbar" }, [btn]), cevap);
     root.appendChild(card);
     const sor = async () => {

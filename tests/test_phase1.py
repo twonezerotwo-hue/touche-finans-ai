@@ -26,6 +26,8 @@ import finans_cekirdegi
 import akilli_excel
 import excel_kalite
 import recete_motoru
+import excel_deposu
+from _ortam import AnaExcelYonlendirme
 from belge_dosyasi import gecicileri_temizle, model_gorseli_hazirla
 from telegram_bot import _duzeltme_parse
 from telegram_sorgu import finans_ozeti, kayit_ara, son_kayitlar
@@ -83,10 +85,9 @@ class Phase1Testleri(unittest.TestCase):
         self.gursar = kok / "gursar.xlsx"
         _holding_olustur(self.holding)
         _gursar_olustur(self.gursar)
-        FIRMALAR["touche_holding"]["excel"] = str(self.holding)
-        FIRMALAR["touche_holding"]["yedek_klasoru"] = kok / "yedek_holding"
-        FIRMALAR["gursar_mimarlik"]["excel"] = str(self.gursar)
-        FIRMALAR["gursar_mimarlik"]["yedek_klasoru"] = kok / "yedek_gursar"
+        # Tek ana Excel + tek yedek: Gursar da ayni master dosyaya yazar.
+        self.yonlendirme = AnaExcelYonlendirme(self.holding, kok / "yedek" / "holding - YEDEK.xlsx").baslat()
+        self.yedek = self.yonlendirme.yedek
         self.orijinal_finans_db = finans_cekirdegi.DB_PATH
         self.orijinal_sync_queue = finans_cekirdegi.SYNC_QUEUE_PATH
         self.orijinal_index_dir = akilli_excel.INDEX_DIR
@@ -99,6 +100,7 @@ class Phase1Testleri(unittest.TestCase):
         recete_motoru.RUN_LOG = kok / "recete_runs.jsonl"
 
     def tearDown(self):
+        self.yonlendirme.bitir()
         FIRMALAR.clear()
         FIRMALAR.update(self.orijinal_firmalar)
         guvenlik.AUDIT_LOG = self.orijinal_audit_log
@@ -155,13 +157,11 @@ class Phase1Testleri(unittest.TestCase):
             "Tutar": 1000, "Banka_Masrafi": 10, "Proje": "Göktürk Okulu",
             "Maliyet_Grubu": "Taş işleri", "_guven": .95,
         }]}
+        once = excel_deposu.sha256(self.holding)
+        xlsx_once = sorted(p.name for p in self.holding.parent.glob("*.xlsx"))
         sonuc = excel_yazici.yaz("gursar_mimarlik", veri, "TEST-001")
         self.assertTrue(sonuc["basari"], sonuc)
         self.assertEqual(sonuc["holding_yazilan"], 2)
-
-        wb = load_workbook(self.gursar, data_only=False)
-        self.assertIsNone(wb["Ödeme Geçmişi"]["E6"].value)
-        wb.close()
 
         wb = load_workbook(self.holding, data_only=False)
         ws = wb["03_Kayıt Merkezi"]
@@ -171,25 +171,28 @@ class Phase1Testleri(unittest.TestCase):
         self.assertTrue(str(ws["Y6"].value).startswith("=IF"))
         self.assertEqual(ws["Z7"].value, "TEST-001-001-MASRAF")
         wb.close()
+        # Tek yedek: bir onceki surum; baska hicbir Excel kopyasi olusmaz.
+        self.assertEqual(excel_deposu.sha256(self.yedek), once)
+        self.assertEqual(sorted(p.name for p in self.holding.parent.glob("*.xlsx")), xlsx_once)
+        self.assertEqual(excel_deposu.gecici_dosyalar(), [])
 
-    def test_master_replace_hatasinda_dosyalar_degismez(self):
-        once_gursar = hashlib.sha256(self.gursar.read_bytes()).hexdigest()
+    def test_master_replace_hatasinda_dosya_degismez(self):
         once_holding = hashlib.sha256(self.holding.read_bytes()).hexdigest()
         veri = {"kayitlar": [{
             "Tarih": "25.09.2026", "Cari": "Usta A", "Islem_Turu": "Usta ödemesi",
             "Tutar": 1000, "Proje": "Göktürk Okulu", "Maliyet_Grubu": "Taş işleri",
         }]}
-        gercek_replace = excel_yazici.os.replace
+        gercek_replace = excel_deposu.os.replace
         def master_hedefte_hata(kaynak, hedef):
             if Path(hedef) == self.holding:
                 raise OSError("simule atomik replace hatasi")
             return gercek_replace(kaynak, hedef)
 
-        with patch.object(excel_yazici.os, "replace", side_effect=master_hedefte_hata):
+        with patch.object(excel_deposu.os, "replace", side_effect=master_hedefte_hata):
             sonuc = excel_yazici.yaz("gursar_mimarlik", veri, "ROLLBACK-001")
         self.assertFalse(sonuc["basari"])
-        self.assertEqual(hashlib.sha256(self.gursar.read_bytes()).hexdigest(), once_gursar)
         self.assertEqual(hashlib.sha256(self.holding.read_bytes()).hexdigest(), once_holding)
+        self.assertEqual(excel_deposu.gecici_dosyalar(), [])
 
     def test_touche_inbox_formulu_korunur(self):
         veri = {"kayitlar": [{

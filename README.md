@@ -20,7 +20,8 @@ Touche Holding için yerel çalışan finans karar destek ve belge işleme siste
 - Rol, tutar ve görev ayrılığına bağlı onay matrisi
 - SHA-256 belge manifesti ve değiştirilemez hash-zincirli audit log
 - Dönem kapanış kontrol listesi ve kapalı döneme kayıt engeli
-- Güvenli Excel yedekleme ve atomik kayıt
+- Tek ANA + tek YEDEK Excel, atomik kayıt, doğrulanmış yedek yenileme (tarihli yedek yok)
+- Doğal dille kayıt + adım adım sihirbaz (LLM'siz), deterministik sorgular ve proje/faaliyet sayfaları
 - Audit log ve çift kayıtlı SQLite finans defteri
 - Telegram ve yetkili telefon erişimi
 
@@ -46,7 +47,37 @@ Arayüz: `http://127.0.0.1:8765/`
 
 ## Yapılandırma
 
-Yerel Excel ve çalışma klasörü yolları `scripts/config.py` içinden yönetilir. Telegram bot anahtarı kaynak koda yazılmaz; Windows ortam değişkeni veya kullanıcı kayıt alanından okunur.
+Yerel Excel ve çalışma klasörü yolları `scripts/config.py` içinden yönetilir (başka hiçbir modül yol tanımlamaz).
+Telegram bot anahtarı kaynak koda yazılmaz; Windows ortam değişkeni veya kullanıcı kayıt alanından okunur.
+
+| Ortam değişkeni | Anlamı | Varsayılan |
+|---|---|---|
+| `TOUCHE_MAIN_WORKBOOK` | ANA Smart Excel | Windows: `%USERPROFILE%\OneDrive\Desktop\Touche\Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx` (mevcut dosya, adı değişmedi); diğer: `veri/…xlsx` |
+| `TOUCHE_BACKUP_WORKBOOK` | tek YEDEK Excel | ANA ile aynı klasörde `<ana adı>_backup.xlsx` |
+| `TOUCHE_BASE_DIR` | çalışma klasörü (log, veri, geçici) | Windows: `C:\ai-excel`; diğer: depo klasörü |
+| `TOUCHE_LEDGER_SON_SATIR` | `03_Kayıt Merkezi` formül şablonunun son satırı | `300` |
+| `TOUCHE_PAKET_KAYBI_IZNI=1` | Excel'deki grafik/resim kaybına bilerek izin ver | kapalı |
+
+## Smart Excel çalışma modeli
+
+* Çalışma zamanında yalnız **ANA** ve **YEDEK** Excel vardır. Her onaylı yazmada: doğrula → YEDEK'i mevcut ANA ile yenile ve
+  hash'le doğrula → bellekte değiştir → geçici dosyaya kaydet, yeniden aç ve doğrula → atomik değiştir → geçici dosyayı sil → denetim kaydı.
+  Sonuç: ANA = V11, YEDEK = V10. Tarihli/işlem başı yedek, yedek klasörü yoktur. Ayrıntı: [ARCHITECTURE.md](ARCHITECTURE.md).
+* Geçici Excel dosyaları yalnız yazma sırasında, projenin `temp` klasöründe (`<base>\temp`) oluşur ve hemen silinir; OneDrive klasörüne geçici dosya
+  düşmez (temp, ANA ile aynı diskte değilse hedefin klasörü kullanılır). Başlangıçta `SMART_EXCEL_ROOT / _MAIN_WORKBOOK / _BACKUP_WORKBOOK` satırları yazılır.
+* Geri dönüş yalnız insan/operasyon eylemidir (ANA ile YEDEK'i **takas** eder); yapay zeka, web arayüzü veya Telegram geri dönemez:
+  `py -3.12 scripts\excel_operasyon.py geri-don --neden "…" --onay GERI-DON`
+* Windows kurulum ve temizlik adımları: [DEPLOY_WINDOWS.md](DEPLOY_WINDOWS.md); gerçek makinede doğrulama: `py -3.12 scripts\windows_dogrulama.py`.
+* Operasyon aracı: `durum`, `dogrula`, `mutabakat` (Excel ↔ merkez defter farkı, salt-okunur), `defteri-aktar`, `envanter`,
+  `temizle`, `geri-don`, `entegre-et` — bkz. [EXCEL_FILE_INVENTORY.md](EXCEL_FILE_INVENTORY.md).
+* Geçmişte üretilmiş eski Excel kopyaları otomatik silinmez; `envanter` kanıtlayıp listeler, `temizle --sil --onay SIL` yalnız kanıtlı
+  artık kopyaları siler. Başka Excel dosyalarına dokunulmaz.
+
+## CFO Asistanı
+
+Tam cümle → tek taslak; eksik bilgi → her seferinde tek soru (Faaliyet → Proje → İşlem → İş kalemi/Cari → Kime → Tutar → PB → Tarih →
+Hesap), bilinen değerler korunur. Sorular salt-okunurdur. Holding → Faaliyet → Proje sayfaları tıklanabilir ve tüm sayılar defterden
+hesaplanır (hesaplanamayan: `DATA_NOT_AVAILABLE`). Yetenekler: [CFO_CAPABILITY_MATRIX.md](CFO_CAPABILITY_MATRIX.md).
 
 ## Güvenlik
 
@@ -55,7 +86,7 @@ Excel dosyaları, finans veritabanı, yüklenen belgeler, loglar, yedekler ve ku
 ## Test
 
 ```powershell
-py -3.12 -m unittest discover -s tests -v
+py -3.12 -m pytest -q          # testler üretim Excel'ine asla dokunmaz (geçici klasör; bkz. TESTING.md)
 ```
 
 Finans asistanı para transferi yapmaz. Öneriler kayıtlı verilere dayalı karar desteğidir.

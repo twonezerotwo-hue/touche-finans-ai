@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const money = new Intl.NumberFormat("tr-TR", {style:"currency", currency:"TRY", maximumFractionDigits:2});
-const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, activeDraftToken:null, renderedDocumentTokens:new Set()};
+const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, activeDraftToken:null, cfoTaslak:null, renderedDocumentTokens:new Set()};
 
 function formatAmount(value,currency="TL"){
   const amount=Number(value||0);const code=String(currency||"TL").trim().toUpperCase();
@@ -182,7 +182,7 @@ function renderChatDraft(doc){
   const head=document.createElement("div");head.className="chat-draft-head";
   const title=document.createElement("strong");title.textContent="Onay bekleyen kayıt taslağı";
   const validation=document.createElement("span");validation.className=`validation ${doc.dogrulama?.durum||"FAIL"}`;validation.textContent=`${doc.dogrulama?.durum||"FAIL"} ${doc.dogrulama?.skor||0}/100`;head.append(title,validation);card.appendChild(head);
-  (doc.kayitlar||[]).forEach(x=>{const row=document.createElement("div");row.className="chat-draft-record";row.textContent=`${x.tarih||"Tarih eksik"} · ${x.proje||"Proje yok"} · ${x.cari||"Cari eksik"} · ${x.islem||"İşlem eksik"} · ${x.tutar!==null&&x.tutar!==""?formatAmount(x.tutar,x.pb):"Tutar eksik"} · ${x.hesap_kasa||"Hesap/kasa eksik"}`;card.appendChild(row);(x.otomatik_eslesmeler||[]).forEach(m=>{const auto=document.createElement("div");auto.className="draft-auto-match";auto.textContent=`Otomatik eşleşme: ${m}`;card.appendChild(auto);});});
+  (doc.kayitlar||[]).forEach(x=>{const row=document.createElement("div");row.className="chat-draft-record";row.textContent=`${x.faaliyet||"Faaliyet eksik"} · ${x.tarih||"Tarih eksik"} · ${x.proje||"Proje yok"} · ${x.cari||"Cari eksik"} · ${x.islem||"İşlem eksik"} · ${x.tutar!==null&&x.tutar!==""?formatAmount(x.tutar,x.pb):"Tutar eksik"} · ${x.hesap_kasa||"Hesap/kasa eksik"}`;card.appendChild(row);(x.otomatik_eslesmeler||[]).forEach(m=>{const auto=document.createElement("div");auto.className="draft-auto-match";auto.textContent=`Otomatik eşleşme: ${m}`;card.appendChild(auto);});});
   [...(doc.dogrulama?.hatalar||[]),...(doc.dogrulama?.uyarilar||[])].slice(0,4).forEach(x=>{const w=document.createElement("div");w.className="draft-warning";w.textContent=x;card.appendChild(w);});
   if(doc.durum==="ONAY_BEKLIYOR"){
     const actions=document.createElement("div");actions.className="chat-draft-actions";
@@ -203,18 +203,56 @@ async function chatDraftAction(token,action,card=null){
   try{
     const parola=action==="onay"?await requestApprovalPassword():null;if(action==="onay"&&parola===null)return;
     const result=await jsonRequest(`/api/belge/${token}/${action}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(action==="onay"?{parola}:{})});
-    state.activeDraftToken=null;
+    state.activeDraftToken=null;state.cfoTaslak=null;
     addMessage(action==="onay"?"Kayıt onaylandı; master Excel ve merkez finans defteri güncellendi.":"Taslak iptal edildi; Excel'e yazılmadı.","assistant");
     await Promise.all([loadDashboard(),loadProjectItems(),loadDocuments()]);
   }catch(e){addMessage(`Kayıt işlemi başarısız: ${e.message}`,"assistant");}
+}
+
+/* ---- CFO sihirbazi: yapisal soru + tiklanabilir secenekler (LLM yok) ---- */
+function cfoYanitiIsle(d){
+  if(d.cfo){ state.cfoTaslak = d.cfo.durum==="TOPLANIYOR" ? d.cfo.taslak_id : null; }
+  if(d.taslak_kapat) state.cfoTaslak=null;
+  if(d.cfo&&d.cfo.soru) renderCfoQuestion(d);
+}
+function renderCfoQuestion(d){
+  const soru=d.cfo.soru; const card=document.createElement("div"); card.className="cfo-question"; card.dataset.alan=soru.alan;
+  const chips=document.createElement("div"); chips.className="cfo-chips";
+  (soru.secenekler||[]).forEach(o=>{
+    const b=document.createElement("button"); b.type="button"; b.className="cfo-chip"; b.dataset.secim=o.id; b.textContent=o.etiket; if(o.aciklama)b.title=o.aciklama;
+    b.addEventListener("click",()=>cfoSecim(card,d,soru.alan,o)); chips.appendChild(b);
+  });
+  if(soru.alan!=="tekrar"){
+    const iptal=document.createElement("button"); iptal.type="button"; iptal.className="cfo-chip cfo-chip-iptal"; iptal.textContent="İptal";
+    iptal.addEventListener("click",()=>cfoSecim(card,d,"iptal",{id:"iptal",etiket:"İptal"})); chips.appendChild(iptal);
+  }
+  if(soru.serbest||!(soru.secenekler||[]).length){ const ip=document.createElement("small"); ip.className="cfo-ipucu"; ip.textContent=soru.ipucu||"Cevabı aşağıya yazabilirsiniz."; card.appendChild(ip); }
+  card.appendChild(chips); $("chat").appendChild(card); $("chat").scrollTop=$("chat").scrollHeight;
+}
+async function cfoSecim(card,d,alan,secenek){
+  card.querySelectorAll("button").forEach(b=>b.disabled=true); card.classList.add("cevaplandi");
+  addMessage(secenek.etiket,"user");
+  try{
+    const govde={taslak_id:d.cfo.taslak_id,alan,secim:secenek.id,metin:d.cfo.tekrar_metni};
+    const y=await jsonRequest("/api/cfo/adim",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(govde)});
+    if(y.cevap)addMessage(y.cevap,"assistant"); if(y.kayit_taslagi)renderChatDraft(y.kayit_taslagi); cfoYanitiIsle(y);
+    state.lastIntent=y.niyet||null; setAIStatus("Deterministik motorla yanıtlandı");
+  }catch(e){ card.querySelectorAll("button").forEach(b=>b.disabled=false); addMessage(`Adım işlenemedi: ${e.message}`,"assistant"); }
+}
+async function loadPendingCfoWizard(){
+  try{
+    const r=await jsonRequest("/api/cfo/taslak"); if(!r.taslak||state.cfoTaslak||state.activeDraftToken)return;
+    addMessage("Yarım kalan kayıt taslağınız var. Devam edebilirsiniz.","assistant");
+    if(r.taslak.cevap)addMessage(r.taslak.cevap,"assistant"); if(r.taslak.kayit_taslagi)renderChatDraft(r.taslak.kayit_taslagi); cfoYanitiIsle(r.taslak);
+  }catch(_){ }
 }
 async function ask(question,parola=null,tekrar=false){
   const q=(question||$("soru").value).trim();if(!q)return;
   if(!tekrar){$("soru").value="";addMessage(q,"user");}
   const loading=addMessage("Defter, vadeler ve risk göstergeleri analiz ediliyor…","assistant","loading");$("gonder").disabled=true;setAIStatus("Yerel model analiz ediyor",true);$("aiEvidence").hidden=true;
   try{
-    const d=await jsonRequest("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({soru:q,faaliyet:$("faaliyet").value,profil:profile(),llm:true,onceki_niyet:state.lastIntent,onceki_soru:state.lastContextQuestion,aktif_taslak:state.activeDraftToken,parola})});
-    loading.remove();addMessage(d.cevap,"assistant");if(d.kayit_taslagi)renderChatDraft(d.kayit_taslagi);if(d.taslak_kapat)state.activeDraftToken=null;renderEvidence(d);state.lastIntent=d.niyet||null;state.lastContextQuestion=d.baglam_sorusu||q;
+    const d=await jsonRequest("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({soru:q,faaliyet:$("faaliyet").value,profil:profile(),llm:true,onceki_niyet:state.lastIntent,onceki_soru:state.lastContextQuestion,aktif_taslak:state.activeDraftToken,cfo_taslak:state.cfoTaslak,parola})});
+    loading.remove();addMessage(d.cevap,"assistant");if(d.kayit_taslagi)renderChatDraft(d.kayit_taslagi);if(d.taslak_kapat)state.activeDraftToken=null;cfoYanitiIsle(d);renderEvidence(d);state.lastIntent=d.niyet||null;state.lastContextQuestion=d.baglam_sorusu||q;
     if(d.degisiklik_yapildi)await Promise.all([loadDashboard(),loadProjectItems()]);
     if(d.parola_gerekli&&d.kayit_taslagi_token)await chatDraftAction(d.kayit_taslagi_token,"onay");
     else if(d.parola_gerekli&&d.tekrar_sorusu){const yeniParola=await requestApprovalPassword();if(yeniParola!==null)await ask(d.tekrar_sorusu,yeniParola,true);}
@@ -284,7 +322,7 @@ async function loadRemoteUsers(){ const data=await jsonRequest("/api/remote/user
 
 async function openExcelCenter(){
   const d=await jsonRequest("/api/excel/bilgi");
-  $("excelFileName").textContent=d.ad;$("excelFilePath").textContent=d.yol;
+  $("excelFileName").textContent=d.ad;$("excelFilePath").textContent=d.yol;$("excelBackupName").textContent=d.yedek_mevcut?`Yedek hazır · ${(Number(d.yedek_boyut||0)/1024/1024).toLocaleString("tr-TR",{maximumFractionDigits:1})} MB · ${d.yedek_degisim||""}`:"Henüz yedek yok (ilk kayıttan önce oluşur)";$("excelBackupPath").textContent=d.yedek_yol||"";
   $("excelOpen").hidden=!d.yerel;$("excelStatus").textContent=d.mevcut?`${(Number(d.boyut||0)/1024/1024).toLocaleString("tr-TR",{maximumFractionDigits:1})} MB · erişime hazır`:"Ana Excel bulunamadı";
   $("excelDialog").showModal();
 }
@@ -300,7 +338,6 @@ document.addEventListener("DOMContentLoaded",async()=>{
   $("headerDate").textContent=new Intl.DateTimeFormat("tr-TR",{day:"2-digit",month:"long",year:"numeric"}).format(new Date());
   $("pairForm").addEventListener("submit",async e=>{e.preventDefault();try{await jsonRequest("/api/session/pair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kod:$("pairCode").value})});location.reload();}catch(err){$("pairError").textContent=err.message;}});
   if(!await checkSession())return;
-  try{ await loadActivities(); await Promise.all([loadDashboard(),loadDocuments(true),loadProjectItems(),loadPendingChatDraft()]); }catch(e){ $("anaKarar").textContent=`Veri yüklenemedi: ${e.message}`; }
   $("faaliyet").addEventListener("change",()=>{state.lastIntent=null;state.lastContextQuestion=null;return Promise.all([loadDashboard(),loadProjectItems()]).catch(e=>addMessage(e.message,"assistant"));});
   ["risk","rezerv","vade"].forEach(id=>$(id).addEventListener("change",()=>loadDashboard().catch(e=>addMessage(e.message,"assistant"))));
   $("chatForm").addEventListener("submit",e=>{e.preventDefault();ask();}); document.querySelectorAll("[data-question]").forEach(b=>b.addEventListener("click",()=>ask(b.dataset.question)));
@@ -319,4 +356,6 @@ document.addEventListener("DOMContentLoaded",async()=>{
   ["transferDialog","fxDialog","periodDialog","governanceDialog"].forEach(id=>$(id).querySelector(".dialog-close").addEventListener("click",()=>$(id).close()));
   $("generateCode").addEventListener("click",async()=>{try{const d=await jsonRequest("/api/remote/code",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});$("remoteCode").textContent=d.kod;}catch(e){$("remoteCode").textContent=e.message;}});
   ["dragenter","dragover"].forEach(n=>$("dropZone").addEventListener(n,e=>{e.preventDefault();$("dropZone").classList.add("drag");})); $("dropZone").addEventListener("dragleave",()=>$("dropZone").classList.remove("drag"));$("dropZone").addEventListener("drop",e=>{e.preventDefault();$("dropZone").classList.remove("drag");if(e.dataTransfer?.files?.length){$("dosya").files=e.dataTransfer.files;updateSelectedDocumentFile();}});
+  // Olay dinleyicileri veri yuklenmeden ONCE baglanir: aksi halde erken 'Gonder' tiklamasi formu sayfa yenilemesiyle gonderirdi.
+  try{ await loadActivities(); await Promise.all([loadDashboard(),loadDocuments(true),loadProjectItems(),loadPendingChatDraft()]); await loadPendingCfoWizard(); }catch(e){ $("anaKarar").textContent=`Veri yüklenemedi: ${e.message}`; }
 });

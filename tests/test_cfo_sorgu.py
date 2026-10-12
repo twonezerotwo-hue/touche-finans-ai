@@ -1,0 +1,148 @@
+# -*- coding: utf-8 -*-
+"""CFO okuma sorgulari: dogru kapsam, deterministik sayilar, SIFIR mutasyon."""
+import hashlib
+import unittest
+
+import cfo_sorgu
+import excel_deposu as depo
+import finans_cekirdegi as cekirdek
+import finans_danismani as fd
+from cfo_test_temeli import BUGUN, CfoTestTemeli
+
+
+class SorguTestleri(CfoTestTemeli):
+    def _fis(self, belge, tarih, islem, tutar, cari, hesap="Gürsar TL Banka", proje="Göktürk Okulu",
+             faaliyet="gursar_mimarlik"):
+        kayit = {"Tarih": tarih, "Islem_Turu": islem, "Tutar": tutar, "PB": "TL", "Kur": 1, "Cari": cari,
+                 "Proje": proje, "Hesap_Kasa": hesap, "Aciklama": f"{islem} {cari}"}
+        cekirdek.finans_kaydi_yaz({"belge_id": belge, "firma_key": faaliyet, "tur": "finans_belgesi",
+                                   "veri": {"kayitlar": [kayit]}}, "test")
+
+    def setUp(self):
+        super().setUp()
+        self._fis("H1", "2026-09-01", "Hakediş / Gelir Tahakkuku", 500_000, "İşveren")
+        self._fis("T1", "2026-09-10", "Tahsilat", 200_000, "İşveren")
+        self._fis("G1", "2026-09-15", "Gider Tahakkuku", 300_000, "Devrim")
+        self._fis("O1", "2026-09-20", "Usta/Tedarikçi Ödemesi", 100_000, "Devrim")
+        self._fis("O2", "2026-10-02", "Usta/Tedarikçi Ödemesi", 40_000, "Sebahattin Çakmak")
+        # Baska proje ve baska faaliyet: Goktürk sorularina karismamali
+        self._fis("D1", "2026-09-21", "Usta/Tedarikçi Ödemesi", 9_999, "Devrim", proje="Bahçeşehir Villa")
+        self._fis("H9", "2026-09-22", "Usta/Tedarikçi Ödemesi", 7_777, "Ofis Market", proje="Genel",
+                  faaliyet="touche_holding")
+
+    def sor(self, metin):
+        yanit = cfo_sorgu.cevapla(metin, self.katalog(), BUGUN)
+        self.assertIsNotNone(yanit, metin)
+        return yanit
+
+    def tutar(self, yanit):
+        return yanit["sorgu"]["deger_kurus"] // 100
+
+    # --- spec sorulari ---
+    def test_gokturk_odemeleri_proje_kapsaminda_holding_toplami_degil(self):
+        """Eski davranis: soru faaliyetsiz oldugu icin TUM holding'in odemesini donduruyordu."""
+        y = self.sor("Göktürk okulunda ne kadar ödeme yaptık?")
+        self.assertEqual(self.tutar(y), 140_000)                          # 100.000 + 40.000 (Bahçeşehir/Holding hariç)
+        self.assertEqual(y["sorgu"]["filtre"]["proje"], "Göktürk Okulu")
+        self.assertIn("Gürsar Mimarlık / Göktürk Okulu", y["cevap"])
+        self.assertIn("140.000,00", y["cevap"])
+        eski = fd.asistana_sor("Göktürk okulunda ne kadar ödeme yaptık?", llm_kullan=False)
+        self.assertNotIn("140.000,00", eski["cevap"])                     # eski hat kapsamı bilmiyordu (regresyon kanıtı)
+
+    def test_kazanc_tahsilatla_karistirilmaz(self):
+        y = self.sor("Göktürk okulundan ne kadar kazandık?")
+        self.assertEqual(self.tutar(y), 500_000)
+        self.assertEqual(y["sorgu"]["ek"]["tahsil_edilen_kurus"], 200_000 * 100)
+        self.assertIn("Kazanç ile tahsilat aynı şey değildir", y["cevap"])
+
+    def test_kalan_alacak(self):
+        y = self.sor("Göktürk okulunda ne kadar alacağımız kaldı?")
+        self.assertEqual(self.tutar(y), 300_000)
+
+    def test_faaliyet_toplam_gider(self):
+        y = self.sor("Gürsar'ın toplam gideri ne?")
+        self.assertEqual(self.tutar(y), 300_000)
+        self.assertEqual(y["sorgu"]["filtre"]["faaliyet"], "gursar_mimarlik")
+
+    def test_cari_odemesi(self):
+        y = self.sor("Devrim'e toplam ne kadar ödeme yapıldı?")
+        self.assertEqual(self.tutar(y), 100_000 + 9_999)                   # tum projeler, yalniz Devrim
+        y = self.sor("Göktürk okulunda Devrim'e toplam ne kadar ödeme yaptık?")
+        self.assertEqual(self.tutar(y), 100_000)
+
+    def test_bu_ay_holding_toplam_odeme(self):
+        y = self.sor("Bu ay Holding toplam ne kadar ödeme yaptı?")
+        # Ekim 2026: yalniz O2 (40.000) ; Holding = konsolide
+        self.assertEqual(self.tutar(y), 40_000)
+        self.assertIn("Holding geneli", y["cevap"])
+        self.assertEqual(y["sorgu"]["donem"], "Ekim 2026")
+        y = self.sor("Eylül ayında Holding toplam ne kadar ödeme yaptı?")
+        self.assertEqual(self.tutar(y), 100_000 + 9_999 + 7_777)
+
+    def test_kar_ve_ayrinti_listesi(self):
+        y = self.sor("Göktürk okulunun kârı ne kadar?")
+        self.assertEqual(self.tutar(y), 500_000 - 300_000)
+        self.assertIn("Kâr nakit akışı değildir", y["cevap"])
+        y = self.sor("Göktürk okulu ödemelerini kalem kalem göster")
+        self.assertIn("1. 20.09.2026 · Devrim", y["cevap"])
+        self.assertIn("2. 02.10.2026 · Sebahattin Çakmak", y["cevap"])
+
+    def test_belirsiz_ad_tahmin_edilmez(self):
+        from openpyxl import load_workbook
+        import master_data
+
+        wb = load_workbook(self.ana)
+        ws = wb["99_Ayarlar"]
+        ws["AG20"], ws["AH20"], ws["AI20"] = "Gürsar İnşaat", "Usta", "Devrim Yıldız"
+        ws["AI13"] = None
+        wb.save(self.ana)
+        wb.close()
+        master_data.onbellegi_temizle()
+        y = cfo_sorgu.cevapla("Devrim'e toplam ne kadar ödeme yapıldı?", self.katalog(), BUGUN)
+        self.assertEqual(y["niyet"], "cfo_sorgu_netlestir")
+        self.assertIn("tahmin yürütmedim", y["cevap"])
+
+    def test_desteklenmeyen_soru_none_doner_danismana_devredilir(self):
+        self.assertIsNone(cfo_sorgu.cevapla("Bugün hava nasıl?", self.katalog(), BUGUN))
+
+    # --- sifir mutasyon ---
+    def _durum(self):
+        satir_sayilari = {}
+        with cekirdek._baglanti() as con:
+            for t in ("fisler", "fis_satirlari", "belge_butunlugu"):
+                satir_sayilari[t] = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        ana = hashlib.sha256(self.ana.read_bytes()).hexdigest()
+        yedek = self.yedek.exists()
+        return satir_sayilari, ana, yedek, (hashlib.sha256(self.yedek.read_bytes()).hexdigest() if yedek else None)
+
+    def test_sorgular_excel_ve_defteri_degistirmez(self):
+        once = self._durum()
+        for soru in ("Göktürk okulunda ne kadar ödeme yaptık?", "Devrim'e toplam ne kadar ödeme yapıldı?",
+                     "Bu ay Holding toplam ne kadar ödeme yaptı?", "Göktürk okulundan ne kadar kazandık?",
+                     "Göktürk okulunda ne kadar alacağımız kaldı?", "Gürsar'ın toplam gideri ne?"):
+            self.sor(soru)
+        self.assertEqual(self._durum(), once)
+        self.assertFalse(self.yedek.exists())                              # yedek bile ilerlemedi
+        self.assertEqual(depo.gecici_dosyalar(), [])
+
+    def test_sorgu_kayit_taslagi_olusturmaz(self):
+        from cfo_niyet import analiz_et
+
+        n = analiz_et("Göktürk okulunda ne kadar ödeme yaptık?", self.katalog(), BUGUN)
+        self.assertEqual(n.tur, "SORGU")
+
+    def test_kayit_gecmisi_neden_burada(self):
+        """'Bu ödeme neden burada?' -> denetim zincirinden hikaye."""
+        y = self.baslat("Göktürk Okulu Devrim 10 bin ödeme yapıldı")
+        y = self.sec(y, "hesap", "Gürsar TL Banka")
+        self.onayla(y)
+        kayit_id = self.ledger()[0]["Kayit_ID"]
+        g = self.sor(f"{kayit_id} kaydı neden burada?")
+        self.assertEqual(g["niyet"], "cfo_sorgu")
+        self.assertIn("Göktürk Okulu Devrim 10 bin ödeme yapıldı", g["cevap"])     # orijinal talimat
+        self.assertIn("Excel'e yazıldı", g["cevap"])
+        self.assertIn("Talimat alındı", g["cevap"])
+
+
+if __name__ == "__main__":
+    unittest.main()

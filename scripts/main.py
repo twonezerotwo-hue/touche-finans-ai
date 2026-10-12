@@ -27,15 +27,22 @@ from master_data import master_data_oku
 from invoice2data_adapter import belgeyi_oku as invoice2data_oku
 from finans_cekirdegi import fis_taslaklari, finans_kaydi_kuyruga_al, finans_kaydi_yaz
 
-log_dosya = LOGLAR / f"{datetime.now():%Y-%m-%d}.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    handlers=[
-        logging.FileHandler(log_dosya, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
+def _log_kur():
+    """Gunluk log dosyasini kurar; klasor yoksa olusturur, yazilamazsa konsola duser."""
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    try:
+        LOGLAR.mkdir(parents=True, exist_ok=True)
+        handlers.insert(0, logging.FileHandler(LOGLAR / f"{datetime.now():%Y-%m-%d}.log", encoding="utf-8"))
+    except OSError as exc:  # log yazilamamasi uygulamayi durdurmamali
+        print(f"UYARI: log dosyasi acilamadi, yalniz konsol kullanilacak: {exc}", file=sys.stderr)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        handlers=handlers,
+    )
+
+
+_log_kur()
 log = logging.getLogger(__name__)
 
 FOTO_UZANTI = BELGE_UZANTILARI
@@ -465,10 +472,20 @@ def hazirlanan_belgeyi_yaz(hazir, onay_kaynagi="otomatik"):
     except Exception as exc:
         audit_yaz("muhasebe_fisi_reddi", belge_id=hazir.get("belge_id"), hata=str(exc))
         return False, f"Muhasebe kontrolü başarısız: {exc}"
-    sonuc = yaz(hazir["firma_key"], hazir["veri"], hazir["belge_id"])
+    baglam = {
+        "orijinal_talimat": hazir.get("orijinal_talimat") or hazir.get("kaynak_metin"),
+        "normalize_komut": hazir.get("normalize_komut"), "onay_kaynagi": onay_kaynagi,
+        "taslak_id": hazir.get("taslak_id"),
+    }
+    sonuc = yaz(hazir["firma_key"], hazir["veri"], hazir["belge_id"], aktor=str(onay_kaynagi), baglam=baglam)
     if not sonuc["basari"]:
         audit_yaz("belge_isleme_hatasi", belge_id=hazir["belge_id"], hata=sonuc["hata"])
-        return False, sonuc["hata"]
+        if sonuc.get("hata_kodu") != "MUKERRER_BELGE":
+            return False, sonuc["hata"]
+        # Ayni belge Excel'e daha once yazilmis (yeniden deneme/cift tiklama/cokme sonrasi):
+        # ikinci Excel kaydi olusmaz; merkez defter adimi idempotent oldugundan yine calistirilir.
+        audit_yaz("belge_tekrar_onayi_idempotent", belge_id=hazir["belge_id"])
+        sonuc = {"basari": True, "yazilan": 0, "tekrar": True}
     son_hata = None
     for deneme in range(3):
         try:
