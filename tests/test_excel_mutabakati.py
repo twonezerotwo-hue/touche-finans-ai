@@ -64,6 +64,15 @@ class MutabakatTestleri(CfoTestTemeli):
         self.assertEqual(r["tutar_farki"][0]["defter_tl_kurus"], 10_000 * 100)
         self.assertEqual(r["tutar_farki"][0]["excel_tl_kurus"], 12_345 * 100)
 
+    def test_kur_iki_haneye_yuvarlanmaz_dovizli_satir_sahte_fark_uretmez(self):
+        """5.000 EUR x 55,6521 = 278.260,50 TL; kur 55,65'e yuvarlanirsa 10,50 TL'lik sahte fark cikardi."""
+        satir = {"tutar": 5000, "pb": "EUR", "kur": 55.6521}
+        self.assertEqual(mut._beklenen_tl_kurus(satir), 27_826_050)
+        # 2.275 USD x 48,4305 = 110.179,3875 -> 110.179,39 (ROUND_HALF_UP, defterle ayni)
+        self.assertEqual(mut._beklenen_tl_kurus({"tutar": 2275, "pb": "USD", "kur": 48.4305}), 11_017_939)
+        self.assertEqual(mut._beklenen_tl_kurus({"tutar": 100, "pb": "USD", "kur": "34,5"}), 345_000)
+        self.assertIsNone(mut._beklenen_tl_kurus({"tutar": 100, "pb": "USD", "kur": None}))
+
     def test_excelde_olmayan_defter_fisi_raporlanir(self):
         cekirdek.finans_kaydi_yaz({"belge_id": "SADECE-DEFTER", "firma_key": "gursar_mimarlik", "tur": "finans_belgesi",
                                    "veri": {"kayitlar": [{"Tarih": "2026-09-01", "Islem_Turu": "Gider Tahakkuku",

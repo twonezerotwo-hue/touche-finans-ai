@@ -55,6 +55,14 @@ class SorguTestleri(CfoTestTemeli):
         self.assertEqual(y["sorgu"]["ek"]["tahsil_edilen_kurus"], 200_000 * 100)
         self.assertIn("Kazanç ile tahsilat aynı şey değildir", y["cevap"])
 
+    def test_gokturk_tahsilat_sorusu_proje_kapsaminda_ve_sifir_mutasyon(self):
+        ana_once = hashlib.sha256(self.ana.read_bytes()).hexdigest()
+        y = self.sor("Göktürk okulundan ne kadar tahsil ettik?")
+        self.assertEqual(self.tutar(y), 200_000)                          # yalniz T1; hakedis tahakkuku (500.000) tahsilat degildir
+        self.assertEqual(y["sorgu"]["filtre"]["proje"], "Göktürk Okulu")
+        self.assertIn("200.000,00", y["cevap"])
+        self.assertEqual(hashlib.sha256(self.ana.read_bytes()).hexdigest(), ana_once)
+
     def test_kalan_alacak(self):
         y = self.sor("Göktürk okulunda ne kadar alacağımız kaldı?")
         self.assertEqual(self.tutar(y), 300_000)

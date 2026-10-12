@@ -83,11 +83,16 @@ def _beklenen_tl_kurus(satir: dict) -> int | None:
         return None
     if satir["pb"] in ("TL", "TRY", ""):
         return tutar
-    kur = _kurus(satir["kur"] if satir["kur"] not in (None, "") else 0)
+    # Kur TAM hassasiyetle kullanilir (ornegin 55,6521): kuru 2 haneye yuvarlamak, defterle ayni olan
+    # tutarlara sahte "Tutar farki" uretiyordu. Defter de tutar*kur'u kurusa ROUND_HALF_UP ile yuvarlar.
+    try:
+        kur = Decimal(str(satir["kur"]).replace(",", ".")) if satir["kur"] not in (None, "") else Decimal(0)
+    except Exception:
+        return None
     if not kur:
         return None
     # tutar(kurus) * kur -> TL kurus
-    return int((Decimal(tutar) * Decimal(kur) / Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return int((Decimal(tutar) * kur).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def kontrol() -> dict:
