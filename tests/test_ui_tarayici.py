@@ -212,10 +212,21 @@ class TarayiciTestleri(CfoTestTemeli):
         self.chip("Vazgeç")
         self.cevap_bekle("Vazgeçildi")
         self.assertEqual(len(self.ledger()), yazim_oncesi)
-        # 5) eksik komut: sihirbaz
+        # 5) eksik komut: sihirbaz yalniz eksikleri sorar (tutar bilinir), secimlerle taslaga ulasir
         self.gonder("5 bin gider ekle.")
         self.cevap_bekle("Hangi faaliyet için?")
-        self.assertEqual(len(self.ledger()), yazim_oncesi)
+        self.chip("Gürsar Mimarlık")
+        self.cevap_bekle("Hangi proje?")
+        self.chip("Göktürk Okulu")
+        self.cevap_bekle("Hangi iş kalemi?")
+        self.chip("Elektrik")
+        self.cevap_bekle("Gider hangi cariye/tedarikçiye ait?")
+        self.chip("Sebahattin Çakmak")
+        self.cevap_bekle("Gider Tahakkuku")                                # yalniz yeni taslak kartinda gecer
+        sohbet = s.inner_text("#chat")
+        self.assertIn("Tutar: 5.000 TL", sohbet)
+        self.assertNotIn("Tutar nedir", sohbet)
+        self.assertEqual(len(self.ledger()), yazim_oncesi)                 # onay verilmedi: Excel degismedi
 
 
 if __name__ == "__main__":
