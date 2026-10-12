@@ -99,4 +99,4 @@ not available here.
 | UX simplicity | 4 | 7 | one question at a time, chips; no user study, desktop viewport only |
 | Performance | 4 | 8 | measured on a 40-entry ledger: chat→draft ≈10 ms, chip click ≈13 ms, project page ≈19 ms (median, no model call); the old path needed an LLM call (timeout 180 s) — not measurable without a model |
 | Maintainability | 4 | 7 | one writer, central config, typed new modules; legacy modules still large, 175 mypy errors there, some hard-coded entities remain |
-| Test coverage | 5 | 8 | 147 → 279 tests (incl. 7 browser tests), baseline could not even be collected on Linux; Windows-specific and LLM paths untested |
+| Test coverage | 5 | 8 | 148 → 279 tests (incl. 7 browser tests), baseline could not even be collected on Linux; Windows-specific and LLM paths untested |
