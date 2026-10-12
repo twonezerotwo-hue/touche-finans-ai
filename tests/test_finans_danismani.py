@@ -12,7 +12,11 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import finans_danismani as fd
+import finans_cekirdegi as cekirdek
+import guvenlik
+import veri_katmani
 from finans_cekirdegi import faaliyet_anahtari_bul
+from _ortam import AnaExcelYonlendirme
 
 
 class FinansDanismaniTestleri(unittest.TestCase):
@@ -115,19 +119,11 @@ class FinansDanismaniTestleri(unittest.TestCase):
             plan["D13"], plan["G13"], plan["J13"] = datetime(2026, 10, 20), 462.8, "EUR"
             wb.save(yol)
             wb.close()
-            with patch.dict(fd.FIRMALAR["touche_holding"], {"excel": str(yol)}):
+            with AnaExcelYonlendirme(yol, Path(d) / "yedek" / "master - YEDEK.xlsx"):
                 taksitler = fd._kredi_taksitleri()
         self.assertEqual(len(taksitler), 1)
         self.assertEqual(taksitler[0]["taksit_id"], "KRD-001-01")
         self.assertAlmostEqual(taksitler[0]["tutar"], 19_954.00, places=2)
-
-    def test_gercek_kredi_plani_vadeli_odeme_olarak_gorunur(self):
-        pano = fd.karar_panosu("tum", {"rezerv_gun": 30}, bugun=date(2026, 9, 27))
-        taksit = next(x for x in pano["odemeler"] if x.get("proje") == "KRD-001-01")
-        self.assertEqual(taksit["vade"], "2026-10-20")
-        self.assertAlmostEqual(taksit["tutar"], 25_755.79, places=2)
-        otuz_gun = sum(x["tutar"] for x in pano["odemeler"] if x.get("kalan_gun") is not None and 0 <= x["kalan_gun"] <= 30)
-        self.assertAlmostEqual(pano["nakit_plani"]["30_gun_vadeli_odeme"], otuz_gun, places=2)
 
     def test_gelismis_pano_risk_projeksiyon_ve_veri_kalitesi_uretir(self):
         pano = fd.karar_panosu("tum", {"rezerv_gun": 30}, bugun=date(2026, 9, 27))
@@ -151,18 +147,6 @@ class FinansDanismaniTestleri(unittest.TestCase):
         self.assertEqual(fd._niyet("3 kayıtta proje eksik demişsin, hangi 3 kayıt?"), "veri_kalitesi")
         self.assertEqual(fd._niyet("Şimdiye kadar ne kadar tahsilat yapıldı?"), "gecmis_tahsilat")
         self.assertEqual(fd._niyet("Eylül ayında ne kadar ödeme yaptık?"), "gecmis_odeme")
-
-    def test_kredi_kullanimi_tahsilat_veya_odeme_sayilmaz(self):
-        ozet = fd.nakit_hareket_ozeti("gursar_mimarlik")
-        hareketler = fd.son_nakit_hareketleri("gursar_mimarlik", limit=500)
-        odemeler = [x for x in hareketler if x["yon"] == "Ödeme"]
-        finansman = [x for x in hareketler if x["yon"] == "Kredi kullanımı"]
-        self.assertAlmostEqual(ozet["odeme_tutari"], sum(x["tutar"] for x in odemeler), places=2)
-        self.assertEqual(ozet["odeme_adedi"], len(odemeler))
-        self.assertAlmostEqual(ozet["finansman_girisi"], sum(x["tutar"] for x in finansman), places=2)
-        kredi = next(x for x in hareketler if x["fis_id"] == "JRN-LEGACY-KRD-001-001")
-        self.assertEqual(kredi["yon"], "Kredi kullanımı")
-        self.assertNotIn(kredi, odemeler)
 
     def test_kesin_odeme_toplamini_llm_degistiremez(self):
         pano = {
@@ -191,23 +175,6 @@ class FinansDanismaniTestleri(unittest.TestCase):
         self.assertIn("kredi kullanımı", sonuc["cevap"])
         self.assertEqual(sonuc["aksiyonlar"], [])
 
-    def test_aylik_odeme_sorusu_ve_takip_listesi_baglami_korur(self):
-        pano = fd.karar_panosu("gursar_mimarlik", {"rezerv_gun": 30}, bugun=date(2026, 10, 2))
-        with tempfile.TemporaryDirectory() as d, patch.object(fd, "karar_panosu", return_value=pano), \
-             patch.object(fd, "AUDIT_PATH", Path(d) / "audit.jsonl"), patch.object(fd, "metne_sor") as llm:
-            ilk = fd.asistana_sor("Eylül ayında ne kadar ödeme yaptık?", "gursar_mimarlik", llm_kullan=True)
-            liste = fd.asistana_sor(
-                "Tam listeyi ver", "gursar_mimarlik", llm_kullan=True,
-                onceki_niyet=ilk["niyet"], onceki_soru=ilk["baglam_sorusu"],
-            )
-        llm.assert_not_called()
-        self.assertIn("Eylül 2026", ilk["cevap"])
-        self.assertIn("182.437,89 TL", ilk["cevap"])
-        self.assertIn("Eylül 2026 ödeme listesi (6 kayıt)", liste["cevap"])
-        self.assertIn("5.565,21 TL", liste["cevap"])
-        self.assertNotIn("5.652,21", liste["cevap"])
-        self.assertIn("Toplam: 182.437,89 TL", liste["cevap"])
-
     def test_eksik_kayit_cevabi_yalniz_gercek_fisleri_listeler(self):
         pano = {
             "ozet": {}, "nakit_plani": {}, "odemeler": [],
@@ -219,6 +186,94 @@ class FinansDanismaniTestleri(unittest.TestCase):
         cevap = fd._deterministik_cevap(pano, "veri_kalitesi")
         self.assertIn("F-ORTAK", cevap)
         self.assertNotIn("Taş işleri", cevap)
+
+
+class FinansDanismaniDefterTestleri(unittest.TestCase):
+    """Gercek (uretim) veriye bagli olmayan, tohumlanmis defter senaryolari."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.patches = [
+            patch.object(cekirdek, "DB_PATH", self.root / "finans.db"),
+            patch.object(guvenlik, "AUDIT_LOG", self.root / "audit.jsonl"),
+            patch.object(guvenlik, "LOGLAR", self.root),
+            patch.object(fd, "AUDIT_PATH", self.root / "asistan_audit.jsonl"),
+        ]
+        for p in self.patches:
+            p.start()
+        veri_katmani._HAZIRLANAN.clear()
+        veri_katmani.veritabani_hazirla()
+        self.yonlendirme = AnaExcelYonlendirme(self.root / "master.xlsx", self.root / "yedek" / "m - YEDEK.xlsx").baslat()
+
+    def tearDown(self):
+        self.yonlendirme.bitir()
+        for p in reversed(self.patches):
+            p.stop()
+        self.temp.cleanup()
+
+    def _fis(self, belge, tarih, islem, tutar, cari, hesap="Gürsar TL Banka", pb="TL", kur=1, aciklama=""):
+        cekirdek.finans_kaydi_yaz({"belge_id": belge, "firma_key": "gursar_mimarlik", "tur": "finans_belgesi",
+                                   "veri": {"kayitlar": [{"Tarih": tarih, "Islem_Turu": islem, "Tutar": tutar,
+                                                          "PB": pb, "Kur": kur, "Cari": cari, "Proje": "Göktürk Okulu",
+                                                          "Hesap_Kasa": hesap, "Aciklama": aciklama}]}}, "test")
+
+    def test_kredi_kullanimi_tahsilat_veya_odeme_sayilmaz(self):
+        self._fis("K1", "2026-09-05", "Kredi Kullanımı", 278_260.50, "Banka Kredisi")
+        self._fis("P1", "2026-09-16", "Usta/Tedarikçi Ödemesi", 100_000, "Sebahattin Çakmak", aciklama="Mermer")
+        self._fis("T1", "2026-09-18", "Tahsilat", 40_000, "İşveren")
+        ozet = fd.nakit_hareket_ozeti("gursar_mimarlik")
+        hareketler = fd.son_nakit_hareketleri("gursar_mimarlik", limit=500)
+        odemeler = [x for x in hareketler if x["yon"] == "Ödeme"]
+        finansman = [x for x in hareketler if x["yon"] == "Kredi kullanımı"]
+        self.assertAlmostEqual(ozet["odeme_tutari"], 100_000, places=2)
+        self.assertEqual(ozet["odeme_adedi"], len(odemeler))
+        self.assertAlmostEqual(ozet["finansman_girisi"], 278_260.50, places=2)
+        self.assertAlmostEqual(ozet["tahsilat_tutari"], 40_000, places=2)
+        kredi = next(x for x in hareketler if x["fis_id"] == "JRN-K1-001")
+        self.assertEqual(kredi["yon"], "Kredi kullanımı")
+        self.assertNotIn(kredi, odemeler)
+
+    def test_aylik_odeme_sorusu_ve_takip_listesi_baglami_korur(self):
+        bas, _, _ = fd._donem_coz("eylül")
+        yil = bas.year
+        tutarlar = [10_000, 20_000.50, 30_000, 40_000, 50_000, 32_437.39]
+        for i, tutar in enumerate(tutarlar, 1):
+            self._fis(f"E{i}", f"{yil}-09-{i + 3:02d}", "Usta/Tedarikçi Ödemesi", tutar, f"Usta {i}")
+        self._fis("OCAK", f"{yil}-01-10", "Usta/Tedarikçi Ödemesi", 999, "Başka Ay")
+        pano = fd.karar_panosu("gursar_mimarlik", {"rezerv_gun": 30}, bugun=date(yil, 10, 2))
+        with patch.object(fd, "karar_panosu", return_value=pano), patch.object(fd, "metne_sor") as llm:
+            ilk = fd.asistana_sor("Eylül ayında ne kadar ödeme yaptık?", "gursar_mimarlik", llm_kullan=True)
+            liste = fd.asistana_sor(
+                "Tam listeyi ver", "gursar_mimarlik", llm_kullan=True,
+                onceki_niyet=ilk["niyet"], onceki_soru=ilk["baglam_sorusu"],
+            )
+        llm.assert_not_called()
+        self.assertIn(f"Eylül {yil}", ilk["cevap"])
+        self.assertIn("182.437,89 TL", ilk["cevap"])
+        self.assertIn(f"Eylül {yil} ödeme listesi (6 kayıt)", liste["cevap"])
+        self.assertIn("Toplam: 182.437,89 TL", liste["cevap"])
+        self.assertNotIn("999,00", liste["cevap"])
+
+    def test_kredi_plani_vadeli_odeme_olarak_gorunur(self):
+        wb = Workbook()
+        wb.remove(wb.active)
+        ayarlar = wb.create_sheet("99_Ayarlar")
+        ayarlar["AD3"], ayarlar["AE3"] = "TL", 1
+        ayarlar["AD4"], ayarlar["AE4"] = "EUR", 55
+        wb.create_sheet("03_Kayıt Merkezi")
+        plan = wb.create_sheet("04_Kredi & Vade")
+        plan["A13"], plan["B13"], plan["C13"] = "KRD-001-01", "KRD-001", "Gürsar İnşaat"
+        plan["D13"], plan["G13"], plan["J13"] = datetime(2026, 10, 20), 462.8, "EUR"
+        wb.save(self.root / "master.xlsx")
+        wb.close()
+        fd._KREDI_CACHE["kimlik"] = None
+        pano = fd.karar_panosu("tum", {"rezerv_gun": 30}, bugun=date(2026, 9, 27))
+        taksit = next(x for x in pano["odemeler"] if x.get("proje") == "KRD-001-01")
+        self.assertEqual(taksit["vade"], "2026-10-20")
+        self.assertAlmostEqual(taksit["tutar"], 462.8 * 55, places=2)
+        otuz_gun = sum(x["tutar"] for x in pano["odemeler"] if x.get("kalan_gun") is not None and 0 <= x["kalan_gun"] <= 30)
+        self.assertAlmostEqual(pano["nakit_plani"]["30_gun_vadeli_odeme"], otuz_gun, places=2)
 
 
 if __name__ == "__main__":

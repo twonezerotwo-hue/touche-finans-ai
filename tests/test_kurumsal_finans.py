@@ -45,14 +45,15 @@ class KurumsalFinansTestleri(unittest.TestCase):
         self.assertEqual(sum(x["borc"] for x in mizan.values()), sum(x["alacak"] for x in mizan.values()))
 
     def test_hesap_esleme_konsolide_mizanda_kullanilir(self):
-        kurumsal.hesap_eslemesi_kaydet("gursar_mimarlik", "799", "740", "test")
-        hazir = {"belge_id": "MAP-1", "firma_key": "gursar_mimarlik", "tur": "bilinmeyen", "veri": {"kayitlar": [{
-            "Tarih": "28.09.2026", "Cari": "X", "Tutar": 500,
+        # Yerel 740 (hizmet uretim maliyeti) grup hesap planinda 770'e esleniyor.
+        kurumsal.hesap_eslemesi_kaydet("gursar_mimarlik", "740", "770", "test")
+        hazir = {"belge_id": "MAP-1", "firma_key": "gursar_mimarlik", "tur": "finans_belgesi", "veri": {"kayitlar": [{
+            "Tarih": "28.09.2026", "Cari": "X", "Tutar": 500, "Islem_Turu": "Gider Tahakkuku",
         }]}}
         cekirdek.finans_kaydi_yaz(hazir, "test")
         mizan = {x["hesap"]: x for x in kurumsal.konsolide_mizan("01.09.2026", "30.09.2026")}
-        self.assertIn("740", mizan)
-        self.assertNotIn("799", mizan)
+        self.assertIn("770", mizan)
+        self.assertNotIn("740", mizan)
 
     def test_cek_teminatli_borclanma_kasa_ve_bankayi_336_ile_esler(self):
         hazir = {"belge_id": "CEK-BORC-1", "firma_key": "gursar_mimarlik", "tur": "sohbet_kaydi", "veri": {"kayitlar": [

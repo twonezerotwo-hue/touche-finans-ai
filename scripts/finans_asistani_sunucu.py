@@ -20,7 +20,7 @@ if str(BASE_DIR / "scripts") not in sys.path:
     sys.path.insert(0, str(BASE_DIR / "scripts"))
 
 from finans_danismani import asistana_sor, faaliyetler, karar_panosu, senaryo_hesapla  # noqa: E402
-from config import MASTER_EXCEL  # noqa: E402
+from config import ana_excel_yolu  # noqa: E402
 from kurumsal_finans import (  # noqa: E402
     banka_hareketi_eslestir, banka_mutabakat_adaylari, banka_mutabakat_listesi,
     butce_sapma_raporu, cari_yaslandirma, donem_kapanis_kontrolu,
@@ -174,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(govde)
 
     def _excel_indir(self):
-        yol = Path(MASTER_EXCEL)
+        yol = ana_excel_yolu()
         if not yol.exists():
             return self._json({"hata": "Ana Excel bulunamadı."}, 404)
         govde = yol.read_bytes()
@@ -280,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/faaliyetler":
             return self._json({"faaliyetler": faaliyetler()})
         if parsed.path == "/api/excel/bilgi":
-            yol = Path(MASTER_EXCEL)
+            yol = ana_excel_yolu()
             return self._json({
                 "ad": yol.name, "yol": str(yol) if session.get("yerel") else "Ana bilgisayardaki tek master Excel",
                 "mevcut": yol.exists(), "boyut": yol.stat().st_size if yol.exists() else 0,
@@ -594,7 +594,7 @@ class Handler(BaseHTTPRequestHandler):
             if yol == "/api/excel/ac":
                 if not session.get("yerel"):
                     return self._json({"hata": "Excel yalnızca ana bilgisayarda doğrudan açılabilir."}, 403)
-                excel_yolu = Path(MASTER_EXCEL)
+                excel_yolu = ana_excel_yolu()
                 if not excel_yolu.exists():
                     raise FileNotFoundError("Ana Excel bulunamadı.")
                 os.startfile(str(excel_yolu))

@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
-from config import ARSIV, FINANS_DB, LOGLAR, MUHASEBE_EXPORT_DIR, FIRMALAR
+from config import ARSIV, FINANS_DB, LOGLAR, MUHASEBE_EXPORT_DIR, FIRMALAR, ana_excel_yolu
 
 DB_PATH = Path(FINANS_DB)
 SYNC_QUEUE_PATH = Path(LOGLAR) / "finans_sync_queue.jsonl"
@@ -275,10 +275,23 @@ def _donem_acik_mi(con, tarih):
     return not satir or satir["durum"] == "ACIK"
 
 
+GRUP_ICI_ANAHTARLAR = ("intercompany", "grup ici", "grup ici transfer", "sirketler arasi", "sirket arasi")
+
+
 def _hesap_eslesmesi(kayit, tur):
+    """Islem turunu (borc, alacak) hesap cifti ile eslestirir.
+
+    Eslesmesi olmayan veya grup ici transfer olan islem ASLA sessizce gidere yazilmaz;
+    hata verilir ve kayit yapilmaz (grup ici transfer icin ``sirketler_arasi_transfer`` kullanilir).
+    """
     islem = _norm(kayit.get("Islem_Turu") or tur)
     hesap_kasa = _norm(kayit.get("Hesap_Kasa"))
     nakit_hesabi = "100" if "kasa" in hesap_kasa else "102"
+    if any(x in islem for x in GRUP_ICI_ANAHTARLAR):
+        raise ValueError(
+            "Grup içi transfer gider olarak yazılamaz; 'Grup içi transfer' ekranından "
+            "kaynak ve hedef faaliyet fişleriyle birlikte oluşturun. Kayıt yapılmadı."
+        )
     if "alacak duzeltme" in islem or "mahsup" in islem:
         return "600", "120"
     if "kredi kullanimi" in islem:
@@ -309,7 +322,10 @@ def _hesap_eslesmesi(kayit, tur):
         return "740", nakit_hesabi
     if "gelir" in islem:
         return nakit_hesabi, "649"
-    return "799", "102"
+    raise ValueError(
+        f"'{kayit.get('Islem_Turu') or tur}' işlem türü için muhasebe hesap eşlemesi tanımlı değil; "
+        "bilinmeyen tür gider olarak yazılmaz. Kayıt yapılmadı."
+    )
 
 
 def fis_taslaklari(hazir):
@@ -809,7 +825,7 @@ def holding_excelini_aktar():
 
     firma = FIRMALAR["touche_holding"]
     ledger = firma["ana_ledger"]
-    wb = load_workbook(firma["excel"], data_only=False, read_only=True)
+    wb = load_workbook(ana_excel_yolu(), data_only=False, read_only=True)
     ws = wb[ledger["sayfa"]]
     s = ledger["sutunlar"]
     aktarilan, atlanan, hatalar = 0, 0, []
@@ -863,7 +879,7 @@ def holding_faaliyetlerini_uzlastir(aktor="sistem"):
     veritabanini_hazirla()
     firma = FIRMALAR["touche_holding"]
     ledger = firma["ana_ledger"]
-    wb = load_workbook(firma["excel"], data_only=False, read_only=True)
+    wb = load_workbook(ana_excel_yolu(), data_only=False, read_only=True)
     ws = wb[ledger["sayfa"]]
     s = ledger["sutunlar"]
     eslemeler = {}

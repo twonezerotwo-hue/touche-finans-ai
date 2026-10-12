@@ -21,7 +21,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from config import FINANS_DB, LOGLAR, FIRMALAR
+from config import LOGLAR, FIRMALAR, ana_excel_yolu
+import finans_cekirdegi as _cekirdek
 from finans_cekirdegi import _norm, faaliyet_anahtari_bul, yonetim_ozeti, veritabanini_hazirla
 from finans_komutlari import acik_borc_vadesi_guncelle, turkce_tarih_coz
 from kurumsal_finans import butce_sapma_raporu, kurumsal_durum
@@ -55,7 +56,8 @@ class DanismanProfili:
 
 def _baglanti():
     veritabanini_hazirla()
-    con = sqlite3.connect(FINANS_DB, timeout=20)
+    # Tek DB yolu: finans_cekirdegi.DB_PATH (testlerde ve operasyonda yonlendirilebilir).
+    con = sqlite3.connect(_cekirdek.DB_PATH, timeout=20)
     con.row_factory = sqlite3.Row
     return con
 
@@ -85,7 +87,7 @@ def _tl_yaz(deger):
 
 def _kredi_taksitleri():
     """Master Excel'deki açık kredi taksitlerini güncel kurla TL olarak döndürür."""
-    excel = Path(FIRMALAR["touche_holding"]["excel"])
+    excel = ana_excel_yolu()
     if not excel.exists():
         return []
     stat = excel.stat()

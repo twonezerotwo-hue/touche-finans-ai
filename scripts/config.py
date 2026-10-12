@@ -11,7 +11,13 @@ from copy import deepcopy
 from faaliyet_sema import firma_tanimi
 
 # === KLASOR YAPISI ===
-BASE_DIR = Path(r"C:\ai-excel")
+# Uretim (Windows) varsayilani C:\ai-excel'dir. Baska bir ortamda (gelistirme,
+# test, CI) TOUCHE_BASE_DIR ile degistirilir; ayarlanmazsa depo klasoru kullanilir.
+# Boylece kod Windows disinda da ice aktarilabilir ve testler uretim dosyasina
+# dokunmadan izole bir klasorde calisir.
+_DEPO_KOKU = Path(__file__).resolve().parent.parent
+_VARSAYILAN_BASE = Path(r"C:\ai-excel") if os.name == "nt" else _DEPO_KOKU
+BASE_DIR = Path(os.environ.get("TOUCHE_BASE_DIR") or _VARSAYILAN_BASE)
 
 
 def _yerel_env_yukle(env_yolu):
@@ -47,12 +53,68 @@ MUHASEBE_EXPORT_DIR = BASE_DIR / "muhasebe_export"
 EXCEL_INDEX_DIR = VERI_DIR / "excel_index"
 RECETE_DIR = BASE_DIR / "receteler"
 FAALIYET_REGISTRY = FIRMALAR_DIR / 'faaliyetler.json'
-MASTER_EXCEL = Path(r"C:\Users\twone\OneDrive\Desktop\Touche\Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx")
+
+# === SMART EXCEL: TEK ANA DOSYA + TEK YEDEK ===
+# Calisma zamaninda finansal Excel yalniz iki dosyadan olusur:
+#   MAIN_WORKBOOK_PATH   -> canli Touche Holding Smart Excel
+#   BACKUP_WORKBOOK_PATH -> bir onceki surum (her onayli yazmadan once MAIN ile yenilenir)
+# Tarihli/islem basina yedek, yedek klasoru veya ikinci bir kaynak dosya YOKTUR.
+# Tum calisma zamani Excel kodu bu iki yolu ana_excel_yolu()/yedek_excel_yolu()
+# uzerinden cozer. Testler TOUCHE_MAIN_WORKBOOK / TOUCHE_BACKUP_WORKBOOK ile
+# gecici dosyalara yonlendirir; uretim dosyasina dokunulmaz.
+_URETIM_ANA_EXCEL = Path(
+    r"C:\Users\twone\OneDrive\Desktop\Touche\Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx"
+)
+_ANA_EXCEL_ADI = "Touche Holding - AI Ready Finans Yönetim Sistemi.xlsx"
+MAIN_WORKBOOK_PATH = Path(
+    os.environ.get("TOUCHE_MAIN_WORKBOOK")
+    or (_URETIM_ANA_EXCEL if os.name == "nt" else VERI_DIR / _ANA_EXCEL_ADI)
+)
+BACKUP_WORKBOOK_PATH = Path(
+    os.environ.get("TOUCHE_BACKUP_WORKBOOK")
+    or (BASE_DIR / "yedek" / f"{MAIN_WORKBOOK_PATH.stem} - YEDEK.xlsx")
+)
+# Geriye uyumluluk: eski kod/testler MASTER_EXCEL adini kullanir. Yeni kod
+# ana_excel_yolu() kullanmalidir.
+MASTER_EXCEL = MAIN_WORKBOOK_PATH
+# Yalniz envanter/operasyon araclari icin: gecmiste kullanilan eski Gursar dosyasi.
+# Calisma zamaninda ASLA okunmaz veya yazilmaz.
 LEGACY_GURSAR_EXCEL = Path(r"C:\Users\twone\OneDrive\Desktop\Touche\Gürsar Touche\Gürsar Hesap .xlsx")
 INVOICE2DATA_SABLON_DIR = BASE_DIR / "sablonlar" / "invoice2data"
 
+# 03_Kayit Merkezi'nde formul sablonunun hazir oldugu son satir. Bunun otesine
+# yazilirsa satirda formuller olmaz; bu yuzden yazma burada durur ve kapasite uyarisi verir.
+LEDGER_SON_SATIR = int(os.environ.get("TOUCHE_LEDGER_SON_SATIR", "300"))
+
+
+def ana_excel_yolu() -> Path:
+    """Canli (MAIN) Smart Excel yolu. Calisma zamaninda tek dogru kaynak."""
+    return Path(MAIN_WORKBOOK_PATH)
+
+
+def yedek_excel_yolu() -> Path:
+    """Tek yedek (BACKUP) Smart Excel yolu."""
+    return Path(BACKUP_WORKBOOK_PATH)
+
+
+def ana_excel_ayarla(ana, yedek=None):
+    """Ana/yedek yolunu calisma zamaninda degistirir (yalniz test ve operasyon araclari).
+
+    FIRMALAR icindeki geriye uyumlu 'excel' alanlari da ayni dosyaya yonlendirilir;
+    boylece tek bir yol tanimi korunur.
+    """
+    global MAIN_WORKBOOK_PATH, BACKUP_WORKBOOK_PATH, MASTER_EXCEL
+    MAIN_WORKBOOK_PATH = Path(ana)
+    BACKUP_WORKBOOK_PATH = Path(yedek) if yedek else MAIN_WORKBOOK_PATH.with_name(
+        f"{MAIN_WORKBOOK_PATH.stem} - YEDEK.xlsx"
+    )
+    MASTER_EXCEL = MAIN_WORKBOOK_PATH
+    for firma in FIRMALAR.values():
+        if "excel" in firma:
+            firma["excel"] = str(MAIN_WORKBOOK_PATH)
+
+
 # Guvenli kayit/arsiv politikalari
-YEDEK_SAYISI = 20
 VALIDATION_PASS_SCORE = 85
 VALIDATION_REVIEW_SCORE = 60
 TELEGRAM_MAX_DOSYA_MB = 20
@@ -82,7 +144,6 @@ FIRMALAR = {
     "touche_holding": {
         "ad": "Touche Holding",
         "excel": str(MASTER_EXCEL),
-        "yedek_klasoru": FIRMALAR_DIR / "touche_holding" / "yedek",
         "ana_ledger": {
             "sayfa": "03_Kayıt Merkezi",
             "baslik_satiri": 5,
@@ -153,8 +214,6 @@ FIRMALAR = {
         "ad": "Gürsar Mimarlık",
         "faaliyet_aliaslari": ["Gürsar İnşaat"],
         "excel": str(MASTER_EXCEL),
-        "legacy_excel": str(LEGACY_GURSAR_EXCEL),
-        "yedek_klasoru": FIRMALAR_DIR / "gursar_mimarlik" / "yedek",
         "ana_ledger": {
             "sayfa": "Ödeme Geçmişi",
             "baslik_satiri": 5,
@@ -234,7 +293,6 @@ def master_firma_tanimi(kayit):
     tanim = firma_tanimi(kayit)
     holding = FIRMALAR["touche_holding"]
     tanim["excel"] = holding["excel"]
-    tanim["yedek_klasoru"] = holding["yedek_klasoru"]
     tanim["ana_ledger"] = deepcopy(holding["ana_ledger"])
     tanim["ai_inbox"] = deepcopy(holding["ai_inbox"])
     tanim["master_data"] = deepcopy(holding["master_data"])
@@ -250,7 +308,6 @@ FIRMALAR["gursar_mimarlik"]["master_data"] = deepcopy(FIRMALAR["touche_holding"]
 FIRMALAR["gursar_mimarlik"]["master_data"]["maliyet_gruplari"] = [
     "Taş işleri", "Saha betonu", "Ortak cari", "Diğer"
 ]
-FIRMALAR["gursar_mimarlik"]["yedek_klasoru"] = FIRMALAR["touche_holding"]["yedek_klasoru"]
 FIRMALAR["gursar_mimarlik"]["excel_mode"] = "master"
 
 # === VARSAYILAN FIRMA (belge taninamazsa) ===

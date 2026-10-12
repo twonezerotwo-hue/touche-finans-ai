@@ -14,6 +14,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import finans_danismani as fd
 import finans_komutlari as fk
+from _ortam import AnaExcelYonlendirme
 
 
 class FinansKomutlariTestleri(unittest.TestCase):
@@ -61,11 +62,10 @@ class FinansKomutlariTestleri(unittest.TestCase):
                 ws[f"AC{satir}"] = "Onaylandı"
             wb.save(excel); wb.close()
 
-            firma = fk.FIRMALAR["touche_holding"]
-            with patch.object(fk, "FINANS_DB", db), \
+            with patch.object(fk._cekirdek, "DB_PATH", db), \
                  patch.object(fk, "veritabani_yedekle", return_value=root / "db-yedek.db"), \
                  patch.object(fk, "audit_yaz"), \
-                 patch.dict(firma, {"excel": str(excel), "yedek_klasoru": root / "yedek"}):
+                 AnaExcelYonlendirme(excel, root / "yedek" / "master - YEDEK.xlsx"):
                 sonuc = fk.acik_borc_vadesi_guncelle([
                     {"faaliyet": "gursar_mimarlik", "proje": "Göktürk Okulu", "cari": "Taş işleri"},
                     {"faaliyet": "gursar_mimarlik", "proje": "Göktürk Okulu", "cari": "Saha betonu"},
@@ -79,6 +79,9 @@ class FinansKomutlariTestleri(unittest.TestCase):
             self.assertEqual(wb["03_Kayıt Merkezi"]["U7"].value, datetime(2026, 10, 13))
             wb.close()
             self.assertEqual(sonuc["excel_satirlari"], [6, 7])
+            # Tek yedek: islem oncesi surum; baska Excel kopyasi yok.
+            self.assertTrue((root / "yedek" / "master - YEDEK.xlsx").exists())
+            self.assertEqual([p.name for p in (root / "yedek").iterdir()], ["master - YEDEK.xlsx"])
 
 
 if __name__ == "__main__":

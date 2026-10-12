@@ -15,7 +15,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-from config import EXCEL_INDEX_DIR, FIRMALAR
+from config import EXCEL_INDEX_DIR, FIRMALAR, ana_excel_yolu
 from finans_cekirdegi import yonetim_ozeti
 from ollama_client import metne_sor
 
@@ -51,7 +51,7 @@ def _sha256(path):
 def _excel_yolu(firma_key):
     if firma_key not in FIRMALAR:
         raise ValueError("Faaliyet bulunamadı.")
-    path = Path(FIRMALAR[firma_key]["excel"])
+    path = ana_excel_yolu()
     if path.suffix.lower() not in {".xlsx", ".xlsm", ".xls"}:
         raise ValueError("Yalnız Excel çalışma kitapları indekslenebilir.")
     if not path.exists():
@@ -160,7 +160,7 @@ def _finansal_ozet_cevabi(firma_key, soru, excel_kaynaklari):
     cevap = (f"{donem} için gelir {ozet['gelir']:,.2f} TL, gider {ozet['gider']:,.2f} TL, "
              f"net sonuç {ozet['net']:,.2f} TL. Nakit/banka {ozet['nakit']:,.2f} TL, "
              f"alacak {ozet['alacak']:,.2f} TL ve borç {ozet['borc']:,.2f} TL.")
-    kaynak = f"{Path(FIRMALAR[firma_key]['excel']).name}#merkezi_defter:{donem}"
+    kaynak = f"{ana_excel_yolu().name}#merkezi_defter:{donem}"
     return {"cevap": cevap, "kaynaklar": [kaynak, *excel_kaynaklari[:2]], "guven": 100}
 
 

@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Firma Excel'lerine AI kaydi yazma (v2)."""
+"""Smart Excel'e AI kaydi yazma (v3).
 
+Bu modul YALNIZ satir/sutun sozlesmesini bilir; dosya guvenligi (tek ANA + tek YEDEK,
+gecici dosya, atomik yerlestirme, formul/veri koruma, denetim) ``excel_deposu``
+modulundedir. Burada dosyaya dogrudan ``save``/``replace``/kopya YAPILMAZ.
+"""
+
+import hashlib
 import logging
-import os
-import shutil
-import uuid
+import unicodedata
 from datetime import datetime
-from pathlib import Path
-from openpyxl import load_workbook
 
-from config import FIRMALAR, YEDEK_SAYISI
-from guvenlik import audit_yaz
-from kayit_kilidi import kilitli
+import config
+from config import FIRMALAR
+from excel_deposu import DepoHatasi, guvenli_degistir
 from master_data import (
     GURSAR_SISTEM_HESAPLARI,
     SISTEM_ISLEM_ETKILERI,
@@ -20,222 +22,154 @@ from master_data import (
 
 log = logging.getLogger(__name__)
 
-
-# Alias: LLM baska isim kullanirsa bunlara eslestir
-_ALAN_ALIASLARI = {
-    "Alici": ["Cari", "Alici", "Alıcı", "Kisi", "Kişi", "Firma"],
-    "Tutar_TL": ["Tutar", "Tutar_TL", "TutarTL", "Mebla", "Meblağ", "Amount"],
-    "Islem_Turu": ["Islem_Turu", "İşlem_Türü", "IslemTuru", "Tur"],
-    "Is_Kalemi": ["Is_Kalemi", "İş_Kalemi", "IsKalemi", "Kalem", "Aciklama"],
-    "Kaynak_Belge": ["Kaynak_Belge", "Belge", "Belge_No", "Referans"],
-    "FAST_Sorgu_No": ["FAST_Sorgu_No", "FastNo", "SorguNo", "Islem_No"],
-}
+AI_GIRIS_SON_SATIR = 500        # 05_AI Belge Inbox tarama siniri
+AYARLAR_SAYFASI = "99_Ayarlar"
+# Bir ledger satirinin bos/dolu sayilmasini belirleyen kimlik sutunlari.
+LEDGER_KIMLIK_ALANLARI = ("Kayit_ID", "Tarih", "Faaliyet", "Cari", "Islem_Turu", "Tutar")
 
 
-def _normalize_kayit(kayit, beklenen_alanlar):
-    """LLM anahtarlarini duzelt. Alias'lar ile eslestir."""
-    if not isinstance(kayit, dict):
-        return kayit
-
-    def _norm(s):
-        s = str(s).lower()
-        return (s.replace('_', '').replace(' ', '')
-                 .replace('ı', 'i').replace('İ', 'i')
-                 .replace('ş', 's').replace('Ş', 's')
-                 .replace('ğ', 'g').replace('Ğ', 'g')
-                 .replace('ü', 'u').replace('Ü', 'u')
-                 .replace('ö', 'o').replace('Ö', 'o')
-                 .replace('ç', 'c').replace('Ç', 'c'))
-
-    # Normalize edilmis kayit: {norm_anahtar: (orijinal_anahtar, deger)}
-    kayit_norm = {_norm(k): (k, v) for k, v in kayit.items()}
-
-    yeni = {}
-    eslesmis_orijinaller = set()
-
-    for alan in beklenen_alanlar:
-        # 1) Once direkt eslesme
-        k_norm = _norm(alan)
-        if k_norm in kayit_norm:
-            orijinal_k, deger = kayit_norm[k_norm]
-            yeni[alan] = deger
-            eslesmis_orijinaller.add(orijinal_k)
-            continue
-
-        # 2) Sonra alias'larla eslestir (Alici <-> Cari gibi)
-        bulundu = False
-        if alan in _ALAN_ALIASLARI:
-            for alias in _ALAN_ALIASLARI[alan]:
-                alias_norm = _norm(alias)
-                if alias_norm in kayit_norm:
-                    orijinal_k, deger = kayit_norm[alias_norm]
-                    yeni[alan] = deger
-                    eslesmis_orijinaller.add(orijinal_k)
-                    bulundu = True
-                    break
-
-        if not bulundu:
-            yeni[alan] = ""
-
-    # LLM'in diger alanlarini da koru
-    for k, v in kayit.items():
-        if k not in eslesmis_orijinaller and k not in yeni:
-            yeni[k] = v
-
-    return yeni
-
-
-
-# ============================================================
-# YEDEKLEME
-# ============================================================
-
-def _yedek_al(firma_key):
-    firma = FIRMALAR[firma_key]
-    excel = Path(firma["excel"])
-    yedek_klasor = Path(firma["yedek_klasoru"])
-    yedek_klasor.mkdir(parents=True, exist_ok=True)
-
-    zaman = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    yedek_ad = f"{excel.stem}_{zaman}.xlsx"
-    yedek_yol = yedek_klasor / yedek_ad
-
-    shutil.copy2(excel, yedek_yol)
-    log.info(f"Yedek alindi: {yedek_yol.name}")
-    _eski_yedekleri_temizle(yedek_klasor, tut=YEDEK_SAYISI)
-    return yedek_yol
-
-
-def _eski_yedekleri_temizle(yedek_klasor, tut=10):
-    yedekler = sorted(yedek_klasor.glob("*.xlsx"),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-    for eski in yedekler[tut:]:
-        try:
-            eski.unlink()
-        except Exception as e:
-            log.warning(f"Eski yedek silinemedi: {eski.name} - {e}")
+def _norm(value):
+    metin = unicodedata.normalize("NFKD", str(value or "").casefold().replace("ı", "i"))
+    return "".join(ch for ch in metin if not unicodedata.combining(ch)).strip()
 
 
 # ============================================================
 # YARDIMCILAR
 # ============================================================
 
-def _ilk_bos_satir(ws, sutun, baslangic, son=500):
-    """Belirtilen sutunda ilk bos satiri bul."""
-    for satir in range(baslangic, son):
-        if ws[f"{sutun}{satir}"].value is None:
-            return satir
-    return son
+def _bos_mu(deger):
+    return deger is None or (isinstance(deger, str) and not deger.strip())
 
 
-def _mukerrer_mi(ws, deger, sutun, ilk_satir, son_satir=500):
+def _formul_mu(hucre):
+    return hucre.data_type == "f"
+
+
+def _hucre_yaz(ws, adres, deger):
+    """Metni her zaman metin olarak yazar (``=``/``+`` ile baslayan metin formul olmaz)."""
+    hucre = ws[adres]
+    hucre.value = deger
+    if isinstance(deger, str):
+        hucre.data_type = "s"
+    return hucre
+
+
+def _tarih_yaz(ws, adres, deger):
+    hucre = _hucre_yaz(ws, adres, deger)
+    if isinstance(deger, datetime) and hucre.number_format == "General":
+        hucre.number_format = r"dd\.mm\.yyyy"
+    return hucre
+
+
+def _excel_tarihi(value, zorunlu=False):
+    """Metin/ISO tarihini datetime'a cevirir; cevrilemezse ``zorunlu`` ise hata verir."""
+    if isinstance(value, datetime):
+        return value
+    if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
+        return datetime(value.year, value.month, value.day)
+    metin = str(value or "").strip()
+    for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%y"):
+        try:
+            return datetime.strptime(metin, fmt)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(metin)
+    except ValueError:
+        pass
+    if zorunlu:
+        raise ValueError(f"Geçersiz tarih: {value!r}")
+    return value
+
+
+def _mukerrer_mi(ws, deger, sutun, ilk_satir, son_satir):
     if not deger:
         return False
-    for satir in range(ilk_satir, son_satir):
+    aranan = str(deger).strip()
+    for satir in range(ilk_satir, son_satir + 1):
         h = ws[f"{sutun}{satir}"]
-        if h.value and str(h.value).strip() == str(deger).strip():
+        if h.value and str(h.value).strip() == aranan:
             return True
     return False
 
 
-def _mukerrer_kayit_mi(ws, yeni_kayit, sutunlar, ilk_satir, son_satir=500):
-    """Ayni Tarih + Cari + Tutar kombinasyonu var mi?
-    Donus: (mukerrer_mi, satir_no)
+def _satir_no(koordinat):
+    return int("".join(ch for ch in koordinat if ch.isdigit()))
+
+
+def _bos_satirlar(ws, sutunlar, kimlik_alanlari, yazilacak_alanlar, ilk_satir, son_satir):
+    """Yazmak icin GUVENLI satirlari dondurur.
+
+    Bir satir ancak kimlik sutunlarinin (kayit no, tarih, cari, tutar...) hicbirinde
+    formul olmayan bir deger yoksa VE yazacagimiz sutunlarin hicbirinde formul yoksa
+    uygundur. Kimlik sutunlarindan bazilari dolu ama kayit no bos olan KISMEN DOLU
+    satirlar ATLANIR; uzerlerine yazilmaz.
+    Donus: (uygun_satirlar, atlanan_kismi_dolu_satirlar)
     """
-    yeni_tarih = str(yeni_kayit.get("Tarih", "")).strip()
-    yeni_cari = str(yeni_kayit.get("Cari") or yeni_kayit.get("Alici") or "").strip().lower()
-    yeni_tutar_raw = yeni_kayit.get("Tutar_TL") or yeni_kayit.get("Tutar") or 0
-
-    try:
-        yeni_tutar = float(yeni_tutar_raw)
-    except (ValueError, TypeError):
-        yeni_tutar = 0
-
-    if not yeni_tarih and not yeni_cari and not yeni_tutar:
-        return False, None
-
-    tarih_sutun = sutunlar.get("Tarih", "B")
-    cari_sutun = sutunlar.get("Alici", "E")
-    tutar_sutun = sutunlar.get("Tutar_TL", "G")
-
-    for satir in range(ilk_satir, son_satir):
-        mevcut_tarih = str(ws[f"{tarih_sutun}{satir}"].value or "").strip()
-        mevcut_cari = str(ws[f"{cari_sutun}{satir}"].value or "").strip().lower()
-        mevcut_tutar_raw = ws[f"{tutar_sutun}{satir}"].value or 0
-
-        try:
-            mevcut_tutar = float(mevcut_tutar_raw)
-        except (ValueError, TypeError):
-            mevcut_tutar = 0
-
-        if (mevcut_tarih == yeni_tarih and
-            mevcut_cari == yeni_cari and
-            mevcut_tutar == yeni_tutar and
-            yeni_tutar > 0):
-            return True, satir
-
-    return False, None
+    uygun, kismi = [], []
+    kimlik = [sutunlar[a] for a in kimlik_alanlari if a in sutunlar]
+    yazilacak = {sutunlar[a] for a in yazilacak_alanlar if a in sutunlar}
+    for satir in range(ilk_satir, son_satir + 1):
+        formullu_hedef = any(_formul_mu(ws[f"{c}{satir}"]) for c in yazilacak)
+        if formullu_hedef:
+            continue
+        dolu = [c for c in kimlik
+                if not _bos_mu(ws[f"{c}{satir}"].value) and not _formul_mu(ws[f"{c}{satir}"])]
+        if not dolu:
+            uygun.append(satir)
+        elif len(dolu) < len(kimlik):
+            kismi.append(satir)
+    return uygun, kismi
 
 
-def _gecici_yol(excel_yolu):
-    # Same directory guarantees that replace stays on the destination filesystem.
-    return excel_yolu.parent / f".{excel_yolu.stem}.{uuid.uuid4().hex}.tmp{excel_yolu.suffix}"
-
-
-def _gecici_exceli_dogrula(gecici_yol, beklenen_sayfalar):
-    """Kaydi yeniden acar; ZIP/XLSX butunlugu ile hedef sayfalari dogrular."""
-    wb = load_workbook(gecici_yol, read_only=True, data_only=False)
-    try:
-        eksik = [sayfa for sayfa in beklenen_sayfalar if sayfa not in wb.sheetnames]
-        if eksik:
-            raise ValueError(f"Gecici Excel'de sayfa eksik: {', '.join(eksik)}")
-    finally:
-        wb.close()
+def _kayit_id(onek, kaynak_id):
+    """Ayni kaynak kimligi her zaman ayni Kayit_ID'yi uretir (deterministik)."""
+    ozet = hashlib.sha256(str(kaynak_id).encode("utf-8")).hexdigest()[:12].upper()
+    return f"{onek}-{ozet}"
 
 
 # ============================================================
 # ANA YAZMA FONKSIYONU
 # ============================================================
 
-@kilitli
-def yaz(firma_key, veri, belge_id, test_modu=False):
-    """
-    Belirtilen firmaya veri yazar.
-    test_modu=True ise yazma sonrasi otomatik geri alir.
+def _kayit_ozeti(kayit, kayit_id="", kaynak_id=""):
+    return {
+        "transaction_id": kayit_id, "kaynak_belge_id": kaynak_id,
+        "faaliyet": kayit.get("Faaliyet"), "proje": kayit.get("Proje"),
+        "islem_turu": kayit.get("Islem_Turu"), "cari": kayit.get("Cari"),
+        "hesap": kayit.get("Hesap_Kasa"), "tutar": kayit.get("Tutar"), "pb": kayit.get("PB"),
+        "tarih": str(kayit.get("Tarih") or ""), "aciklama": str(kayit.get("Aciklama") or "")[:200],
+        "baglanti_id": kayit.get("Baglanti_ID"),
+    }
+
+
+def yaz(firma_key, veri, belge_id, aktor="sistem", baglam=None, kuru_calistir=False):
+    """Belirtilen firmaya veri yazar (hepsi tek ANA Excel'e, excel_deposu uzerinden).
+
+    ``baglam``: denetim icin {orijinal_talimat, normalize_komut, onay_kaynagi, taslak_id ...}.
+    Donus: {"basari", "yazilan", "hata", ...}; basarisizlikta ANA/YEDEK degismez.
     """
     if firma_key not in FIRMALAR:
         return {"basari": False, "yazilan": 0, "hata": f"Bilinmeyen firma: {firma_key}"}
 
     # Tek finansal kaynak: bütün faaliyetler Touche Holding master dosyasına yazılır.
-    hedef_key = "touche_holding"
-    hedef_keys = [hedef_key]
-    excel_yolu = Path(FIRMALAR[hedef_key]["excel"])
-    if not excel_yolu.exists():
-        return {"basari": False, "yazilan": 0, "hata": f"Master Excel yok: {excel_yolu}"}
+    master_firma = FIRMALAR["touche_holding"]
+    ledger_sayfa = master_firma["ana_ledger"]["sayfa"]
+    inbox_sayfa = master_firma["ai_inbox"]["sayfa"]
+    baglam = dict(baglam or {})
 
-    yedekler = {}
-    workbookler = {}
-    gecici_dosyalar = {}
-    degistirilenler = []
-    try:
-        # Once butun hedeflerin geri donus kopyasi alinir.
-        for key in hedef_keys:
-            yedekler[key] = _yedek_al(key)
-            workbookler[key] = load_workbook(Path(FIRMALAR[key]["excel"]))
-
-        master_wb = workbookler[hedef_key]
-        master_firma = FIRMALAR[hedef_key]
+    def degistir(wb):
         # Sohbetten gelen standart kayıtlar, faaliyetinden bağımsız olarak tek
         # master ledger şemasına yazılır. Böylece Gürsar gelir/hakedişleri eski
         # yalnız-ödeme adaptöründe yanlışlıkla gider tahakkukuna dönüşmez.
         if veri.get("_hedef") == "ana_ledger":
-            _yeni_cari_tanimlarini_yaz(master_wb, veri)
-            _sistem_tanimlarini_yaz(master_wb, veri)
-            sonuc = _yaz_touche_ledger(master_wb, master_firma, veri, belge_id)
+            _yeni_cari_tanimlarini_yaz(wb, veri)
+            _sistem_tanimlarini_yaz(wb, veri)
+            sonuc = _yaz_touche_ledger(wb, master_firma, veri, belge_id)
         elif firma_key == "touche_holding":
-            sonuc = _yaz_touche(master_wb, master_firma, veri, belge_id)
+            sonuc = _yaz_touche(wb, master_firma, veri, belge_id)
         elif firma_key == "gursar_mimarlik":
-            sonuc = _yaz_gursar_holding(master_wb, master_firma, veri, belge_id)
+            sonuc = _yaz_gursar_holding(wb, master_firma, veri, belge_id)
         else:
             faaliyet = FIRMALAR[firma_key].get("faaliyet") or FIRMALAR[firma_key].get("ad")
             master_veri = {
@@ -245,86 +179,45 @@ def yaz(firma_key, veri, belge_id, test_modu=False):
                     for kayit in veri.get("kayitlar", [])
                 ],
             }
-            sonuc = _yaz_touche_ledger(master_wb, master_firma, master_veri, belge_id)
-
-        if firma_key != "touche_holding" and sonuc["basari"]:
+            sonuc = _yaz_touche_ledger(wb, master_firma, master_veri, belge_id)
+        if sonuc["basari"] and firma_key != "touche_holding":
             sonuc["holding_yazilan"] = sonuc["yazilan"]
-
-        if not sonuc["basari"]:
-            audit_yaz("excel_yazma_reddedildi", firma=firma_key, belge_id=belge_id, hata=sonuc["hata"])
-            return sonuc
-
-        # Asil dosyaya dokunmadan gecici kaydet ve yeniden acarak dogrula.
-        for key in hedef_keys:
-            excel_yolu = Path(FIRMALAR[key]["excel"])
-            gecici = _gecici_yol(excel_yolu)
-            workbookler[key].save(gecici)
-            beklenen = [FIRMALAR[key]["ana_ledger"]["sayfa"]]
-            if key == "touche_holding":
-                beklenen.append(FIRMALAR[key]["ai_inbox"]["sayfa"])
-            _gecici_exceli_dogrula(gecici, beklenen)
-            gecici_dosyalar[key] = gecici
-
-        for wb in workbookler.values():
-            wb.close()
-        workbookler.clear()
-
-        # os.replace ayni disk uzerinde atomiktir. Coklu dosyada hata olursa yedekler geri yuklenir.
-        for key in hedef_keys:
-            excel_yolu = Path(FIRMALAR[key]["excel"])
-            os.replace(gecici_dosyalar[key], excel_yolu)
-            degistirilenler.append(key)
-
-        if test_modu:
-            for key in hedef_keys:
-                shutil.copy2(yedekler[key], Path(FIRMALAR[key]["excel"]))
-
-        audit_yaz(
-            "excel_yazma_basarili",
-            firma=firma_key,
-            belge_id=belge_id,
-            yazilan=sonuc["yazilan"],
-            holding_yazilan=sonuc.get("holding_yazilan", 0),
-            master_excel=str(excel_yolu),
-            test_modu=test_modu,
-        )
-        log.info("Guvenli tek-master kaydi tamamlandi: %s", excel_yolu)
         return sonuc
-    except Exception as e:
-        log.exception("Guvenli Excel yazma hatasi")
-        for key in degistirilenler:
-            try:
-                shutil.copy2(yedekler[key], Path(FIRMALAR[key]["excel"]))
-            except Exception as geri_hata:
-                log.critical("Yedekten donulemedi (%s): %s", key, geri_hata)
-        teknik_hata = str(e)
-        if isinstance(e, PermissionError) or getattr(e, "winerror", None) in (5, 32):
-            kullanici_hatasi = (
-                "Ana Excel dosyası açık veya OneDrive tarafından kilitli. "
-                "Bilgisayardaki tüm Excel pencerelerini kapatın, OneDrive eşitlemesinin "
-                "tamamlanmasını bekleyin ve aynı taslakta Şifreyle Onayla'ya tekrar basın. "
-                "Kayıt yapılmadı; taslak korunuyor."
-            )
-        else:
-            kullanici_hatasi = teknik_hata
-        audit_yaz("excel_yazma_hatasi", firma=firma_key, belge_id=belge_id, hata=teknik_hata)
-        return {"basari": False, "yazilan": 0, "hata": kullanici_hatasi}
-    finally:
-        for wb in workbookler.values():
-            try:
-                wb.close()
-            except Exception:
-                pass
-        for gecici in gecici_dosyalar.values():
-            try:
-                if Path(gecici).exists():
-                    Path(gecici).unlink()
-            except Exception:
-                pass
+
+    def audit_ek(sonuc):
+        return {
+            "belge_id": belge_id, "firma": firma_key, "yazilan": sonuc.get("yazilan", 0),
+            "kayitlar": sonuc.get("kayit_ozetleri", []),
+            "orijinal_talimat": baglam.get("orijinal_talimat"),
+            "normalize_komut": baglam.get("normalize_komut"),
+            "onay_kaynagi": baglam.get("onay_kaynagi"), "taslak_id": baglam.get("taslak_id"),
+        }
+
+    def degisim_izni(sonuc):
+        # Yalniz bu islemin yazdigi satirlardaki hucreler degisebilir; baska hicbir
+        # mevcut hucre (ozellikle formuller ve doldurulmus satirlar) degismemelidir.
+        satirlar = {o["satir"] for o in sonuc.get("kayit_ozetleri", []) if "satir" in o}
+        return {ledger_sayfa: lambda k: _satir_no(k) in satirlar}
+
+    try:
+        sonuc = guvenli_degistir(
+            degistir, islem_id=baglam.get("islem_id"), aktor=aktor, kaynak="excel_yazici.yaz",
+            beklenen_sayfalar=[ledger_sayfa, inbox_sayfa], audit_ek=audit_ek,
+            degisim_izni=degisim_izni, kuru_calistir=kuru_calistir,
+        )
+    except DepoHatasi as exc:
+        log.warning("Excel yazma reddedildi (%s): %s", exc.kod, exc.mesaj)
+        return {"basari": False, "yazilan": 0, "hata": exc.mesaj, "hata_kodu": exc.kod}
+    except Exception as exc:
+        log.exception("Excel yazma hatasi")
+        return {"basari": False, "yazilan": 0, "hata": str(exc), "hata_kodu": type(exc).__name__}
+    if not sonuc.get("basari"):
+        log.info("Excel yazma reddedildi: %s", sonuc.get("hata"))
+    return sonuc
 
 
 # ============================================================
-# TOUCHE HOLDING YAZMA
+# 05_AI Belge Inbox
 # ============================================================
 
 def _yaz_touche(wb, firma, veri, belge_id):
@@ -333,34 +226,65 @@ def _yaz_touche(wb, firma, veri, belge_id):
         return _yaz_touche_ledger(wb, firma, veri, belge_id)
     inbox = firma["ai_inbox"]
     sayfa_adi = inbox["sayfa"]
-
     if sayfa_adi not in wb.sheetnames:
         return {"basari": False, "yazilan": 0, "hata": f"Sayfa yok: {sayfa_adi}"}
-
     ws = wb[sayfa_adi]
+    sutunlar = inbox["sutunlar"]
+    ilk = inbox["ilk_veri_satiri"]
 
     # SHA-256 belge ozeti daha once inbox'a yazildiysa ayni belgeyi tekrar alma.
-    hash_sutunu = inbox["sutunlar"].get("Belge_Hash")
-    for kayit in veri.get("kayitlar", []):
-        belge_hash = kayit.get("_hash")
-        if hash_sutunu and belge_hash and _mukerrer_mi(
-            ws, belge_hash, hash_sutunu, inbox["ilk_veri_satiri"], 500
-        ):
-            return {"basari": False, "yazilan": 0, "hata": f"Mukerrer SHA-256 belge: {belge_hash}"}
-
-    # Ilk bos satir — baslik satirindan sonra
-    bos_satir = _ilk_bos_satir(ws, "A", inbox["ilk_veri_satiri"], 500)
-
+    hash_sutunu = sutunlar.get("Belge_Hash")
     kayitlar = veri.get("kayitlar", [])
-    yazilan = 0
+    for kayit in kayitlar:
+        belge_hash = kayit.get("_hash")
+        if hash_sutunu and belge_hash and _mukerrer_mi(ws, belge_hash, hash_sutunu, ilk, AI_GIRIS_SON_SATIR):
+            return {"basari": False, "yazilan": 0, "hata": f"Mukerrer SHA-256 belge: {belge_hash}",
+                    "hata_kodu": "MUKERRER_BELGE"}
 
+    yazilacak = [a for a in sutunlar if a != "Durum_Kontrol"]
+    uygun, _ = _bos_satirlar(ws, {a: c for a, c in sutunlar.items() if a != "Durum_Kontrol"},
+                             ("Belge_ID", "AI_Cari", "Tutar", "Belge_Tarihi"),
+                             yazilacak, ilk, AI_GIRIS_SON_SATIR)
+    if len(uygun) < len(kayitlar):
+        return {"basari": False, "yazilan": 0, "hata": "AI Belge Inbox kapasitesi dolu.",
+                "hata_kodu": "KAPASITE_DOLU"}
     for i, kayit in enumerate(kayitlar):
-        satir = bos_satir + i
-        _inbox_satiri_yaz(ws, satir, kayit, belge_id, inbox["sutunlar"], i)
-        yazilan += 1
+        _inbox_satiri_yaz(ws, uygun[i], kayit, belge_id, sutunlar, i)
+    return {"basari": True, "yazilan": len(kayitlar), "hata": ""}
 
-    return {"basari": True, "yazilan": yazilan, "hata": ""}
 
+def _inbox_satiri_yaz(ws, satir, kayit, belge_id, sutunlar, index):
+    belge_id_benzersiz = f"{belge_id}-{index+1:03d}"
+    degerler = {
+        "Belge_ID":         belge_id_benzersiz,
+        "Yukleme_Tarihi":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Kaynak":           "Telegram Bot / AI",
+        "Dosya_Metin_Ref":  kayit.get("_dosya_adi", ""),
+        "AI_Faaliyet":      kayit.get("Faaliyet", ""),
+        "AI_Proje":         kayit.get("Proje", ""),
+        "AI_Cari_Tipi":     kayit.get("Cari_Tipi", ""),
+        "AI_Cari":          kayit.get("Cari", ""),
+        "AI_Islem_Turu":    kayit.get("Islem_Turu", ""),
+        "Tutar":            kayit.get("Tutar", 0),
+        "PB":               kayit.get("PB", "TL"),
+        "Belge_Tarihi":     kayit.get("Tarih", ""),
+        "Vade":             kayit.get("Vade", ""),
+        "AI_Guven":         kayit.get("_guven", 0.90),
+        "Kullanici_Onayi":  kayit.get("_kullanici_onayi", "Onaylandı"),
+        "Hedef_Kayit_ID":   "",
+        "AI_Aciklama":      str(kayit.get("_dogrulama_ozeti") or kayit.get("Aciklama", ""))[:200],
+        "Belge_Hash":       kayit.get("_hash", ""),
+    }
+    for alan, sutun in sutunlar.items():
+        # Q sutunundaki Excel kontrol formulu sablonun parcasidir.
+        if alan == "Durum_Kontrol":
+            continue
+        _hucre_yaz(ws, f"{sutun}{satir}", degerler.get(alan, ""))
+
+
+# ============================================================
+# 99_Ayarlar: yeni cari ve sistem tanimlari (YALNIZ bos hucreler doldurulur)
+# ============================================================
 
 def _yeni_cari_tanimlarini_yaz(wb, veri):
     """Onaylanan sohbet taslagindaki acik yeni carileri master veriye ekler.
@@ -372,16 +296,10 @@ def _yeni_cari_tanimlarini_yaz(wb, veri):
     oneriler = [x for x in veri.get("kayitlar", []) if x.get("_yeni_cari")]
     if not oneriler:
         return 0
-    if "99_Ayarlar" not in wb.sheetnames:
+    if AYARLAR_SAYFASI not in wb.sheetnames:
         raise ValueError("Yeni cari tanımı için 99_Ayarlar sayfası bulunamadı.")
-    ws = wb["99_Ayarlar"]
-
-    def norm(value):
-        import unicodedata
-        metin = unicodedata.normalize("NFKD", str(value or "").casefold().replace("ı", "i"))
-        return "".join(ch for ch in metin if not unicodedata.combining(ch)).strip()
-
-    mevcut = {norm(ws[f"AI{satir}"].value) for satir in range(13, 113) if ws[f"AI{satir}"].value}
+    ws = wb[AYARLAR_SAYFASI]
+    mevcut = {_norm(ws[f"AI{satir}"].value) for satir in range(13, 113) if ws[f"AI{satir}"].value}
     eklendi = 0
     for kayit in oneriler:
         cari = str(kayit.get("Cari") or "").strip()
@@ -389,29 +307,34 @@ def _yeni_cari_tanimlarini_yaz(wb, veri):
         cari_tipi = str(kayit.get("Cari_Tipi") or "Diğer").strip()
         if not cari or not faaliyet:
             raise ValueError("Yeni cari tanımı için faaliyet ve cari adı gerekli.")
-        if norm(cari) in mevcut:
+        if _norm(cari) in mevcut:
             continue
-        bos = next((satir for satir in range(13, 113) if ws[f"AI{satir}"].value in (None, "")), None)
+        bos = next((satir for satir in range(13, 113) if _bos_mu(ws[f"AI{satir}"].value)
+                    and _bos_mu(ws[f"AG{satir}"].value) and _bos_mu(ws[f"AH{satir}"].value)), None)
         if bos is None:
             raise ValueError("99_Ayarlar cari tanım alanı dolu; yeni cari eklenemedi.")
-        ws[f"AG{bos}"] = faaliyet
-        ws[f"AH{bos}"] = cari_tipi
-        ws[f"AI{bos}"] = cari
-        mevcut.add(norm(cari))
+        _hucre_yaz(ws, f"AG{bos}", faaliyet)
+        _hucre_yaz(ws, f"AH{bos}", cari_tipi)
+        _hucre_yaz(ws, f"AI{bos}", cari)
+        mevcut.add(_norm(cari))
         eklendi += 1
     return eklendi
 
 
+def _bos_ise_yaz(ws, adres, deger):
+    """Hucre bos ise yazar; dolu hucre (kullanici verisi/formul) ASLA ezilmez."""
+    if _bos_mu(ws[adres].value):
+        ws[adres] = deger
+        return True
+    return False
+
+
 def _sistem_tanimlarini_yaz(wb, veri):
     """Onaylanan kaydın kontrollü işlem türü ve hesaplarını 99_Ayarlar'a ekler."""
-    if "99_Ayarlar" not in wb.sheetnames:
+    if AYARLAR_SAYFASI not in wb.sheetnames:
         raise ValueError("Sistem tanımları için 99_Ayarlar sayfası bulunamadı.")
-    ws = wb["99_Ayarlar"]
-
-    def norm(value):
-        import unicodedata
-        metin = unicodedata.normalize("NFKD", str(value or "").casefold().replace("ı", "i"))
-        return "".join(ch for ch in metin if not unicodedata.combining(ch)).strip()
+    ws = wb[AYARLAR_SAYFASI]
+    norm = _norm
 
     gerekli_turler = {
         str(k.get("Islem_Turu") or "").strip() for k in veri.get("kayitlar", [])
@@ -424,10 +347,7 @@ def _sistem_tanimlarini_yaz(wb, veri):
     for tur in gerekli_turler:
         satir = mevcut_turler.get(norm(tur))
         if satir is None:
-            satir = next(
-                (aday for aday in range(6, 31) if ws[f"T{aday}"].value in (None, "")),
-                None,
-            )
+            satir = next((aday for aday in range(6, 31) if _bos_mu(ws[f"T{aday}"].value)), None)
             if satir is None:
                 raise ValueError("99_Ayarlar işlem türü alanı dolu; sistem tanımı eklenemedi.")
             ws[f"T{satir}"] = tur
@@ -440,8 +360,9 @@ def _sistem_tanimlarini_yaz(wb, veri):
                 None,
             )
         if etkiler is not None:
+            # Yalniz bos katsayi hucreleri doldurulur; sahibin duzenledigi katsayilar korunur.
             for sutun, deger in zip(("U", "V", "W", "X", "Y", "Z", "AA"), etkiler):
-                ws[f"{sutun}{satir}"] = deger
+                _bos_ise_yaz(ws, f"{sutun}{satir}", deger)
 
     sistem_hesaplari = {norm(x) for x in GURSAR_SISTEM_HESAPLARI}
     gerekli_hesaplar = [
@@ -468,10 +389,7 @@ def _sistem_tanimlarini_yaz(wb, veri):
         hesap = str(kayit.get("Hesap_Kasa") or "").strip()
         satir = mevcut_hesaplar.get(norm(hesap))
         if satir is None:
-            satir = next(
-                (aday for aday in range(13, 63) if ws[f"M{aday}"].value in (None, "")),
-                None,
-            )
+            satir = next((aday for aday in range(13, 63) if _bos_mu(ws[f"M{aday}"].value)), None)
             if satir is None:
                 raise ValueError("99_Ayarlar hesap alanı dolu; sistem hesabı eklenemedi.")
             ws[f"L{satir}"] = str(kayit.get("Faaliyet") or "")
@@ -480,44 +398,63 @@ def _sistem_tanimlarini_yaz(wb, veri):
 
         # Önceki sürüm yalnız L/M sütunlarını dolduruyordu. Mevcut yarım
         # tanımları da tamamla ki açılış bakiyesi ve kur formülleri çalışsın.
-        if ws[f"K{satir}"].value in (None, ""):
-            ws[f"K{satir}"] = yeni_hesap_id()
-        if ws[f"L{satir}"].value in (None, ""):
-            ws[f"L{satir}"] = str(kayit.get("Faaliyet") or "")
-        if ws[f"N{satir}"].value in (None, ""):
-            para_birimi = str(kayit.get("PB") or "").strip().upper()
-            if not para_birimi:
-                para_birimi = "USD" if "USD" in hesap.upper() else "EUR" if "EUR" in hesap.upper() else "TL"
-            ws[f"N{satir}"] = para_birimi
-        if ws[f"O{satir}"].value in (None, ""):
-            ws[f"O{satir}"] = 0
-        ws[f"P{satir}"] = f'=IF($K{satir}="","",IFERROR(VLOOKUP($N{satir},$AD$3:$AE$7,2,FALSE),0))'
-        ws[f"Q{satir}"] = f'=IF($K{satir}="","",$O{satir}*$P{satir})'
+        _bos_ise_yaz(ws, f"K{satir}", yeni_hesap_id())
+        _bos_ise_yaz(ws, f"L{satir}", str(kayit.get("Faaliyet") or ""))
+        para_birimi = str(kayit.get("PB") or "").strip().upper()
+        if not para_birimi:
+            para_birimi = "USD" if "USD" in hesap.upper() else "EUR" if "EUR" in hesap.upper() else "TL"
+        _bos_ise_yaz(ws, f"N{satir}", para_birimi)
+        _bos_ise_yaz(ws, f"O{satir}", 0)
+        _bos_ise_yaz(ws, f"P{satir}", f'=IF($K{satir}="","",IFERROR(VLOOKUP($N{satir},$AD$3:$AE$7,2,FALSE),0))')
+        _bos_ise_yaz(ws, f"Q{satir}", f'=IF($K{satir}="","",$O{satir}*$P{satir})')
 
+
+# ============================================================
+# 03_Kayit Merkezi
+# ============================================================
 
 def _yaz_touche_ledger(wb, firma, veri, belge_id):
-    """Telegram'da acikca girilen ve onaylanan islemi holding ledger'ina yazar."""
+    """CFO sohbetinde/belgede acikca girilen ve onaylanan islemi holding ledger'ina yazar."""
     ledger = firma["ana_ledger"]
     if ledger["sayfa"] not in wb.sheetnames:
         return {"basari": False, "yazilan": 0, "hata": f"Sayfa yok: {ledger['sayfa']}"}
     ws = wb[ledger["sayfa"]]
     sutunlar = ledger["sutunlar"]
+    ilk, son = ledger["ilk_veri_satiri"], config.LEDGER_SON_SATIR
+    kayitlar = veri.get("kayitlar", [])
     gerekli = ("Tarih", "Faaliyet", "Cari_Tipi", "Cari", "Islem_Turu", "Tutar")
-    for sira, kayit in enumerate(veri.get("kayitlar", []), 1):
+    for sira, kayit in enumerate(kayitlar, 1):
         eksik = [alan for alan in gerekli if kayit.get(alan) in (None, "")]
         if eksik:
             return {"basari": False, "yazilan": 0,
                     "hata": f"Kayit {sira} ana ledger icin eksik: {', '.join(eksik)}. Duzelt secenegini kullanin."}
-    boslar = [r for r in range(ledger['ilk_veri_satiri'],301) if ws[f'A{r}'].value in (None,'')]
-    if len(boslar) < len(veri.get('kayitlar',[])):
-        return {'basari':False, 'yazilan':0, 'hata':'Holding kayıt merkezi kapasitesi dolu.'}
-    for index, kayit in enumerate(veri.get("kayitlar", []), 1):
+
+    # Idempotency: ayni belge_id daha once yazildiysa ikinci kez ASLA yazilmaz.
+    for index in range(1, len(kayitlar) + 1):
         kaynak_id = f"{belge_id}-{index:03d}"
-        if _mukerrer_mi(ws, kaynak_id, sutunlar["Kaynak_Belge_ID"], ledger["ilk_veri_satiri"], 500):
-            return {"basari": False, "yazilan": 0, "hata": f"Mukerrer belge: {kaynak_id}"}
+        if _mukerrer_mi(ws, kaynak_id, sutunlar["Kaynak_Belge_ID"], ilk, son):
+            return {"basari": False, "yazilan": 0, "hata": f"Mukerrer belge: {kaynak_id}",
+                    "hata_kodu": "MUKERRER_BELGE"}
+
+    yazilacak_alanlar = [
+        "Kayit_ID", "Tarih", "Faaliyet", "Proje", "Cari_Tipi", "Cari", "Islem_Turu", "Hesap_Kasa",
+        "Tutar", "PB", "Kur", "Baglanti_ID", "Vade", "Durum", "Belge_Referans", "Aciklama",
+        "Kaynak_Belge_ID", "Kayit_Kaynak", "AI_Guven", "Onay_Durumu",
+    ]
+    boslar, kismi = _bos_satirlar(ws, sutunlar, LEDGER_KIMLIK_ALANLARI, yazilacak_alanlar, ilk, son)
+    if len(boslar) < len(kayitlar):
+        return {"basari": False, "yazilan": 0,
+                "hata": f"Holding kayıt merkezi kapasitesi dolu (satır {ilk}-{son}).",
+                "hata_kodu": "KAPASITE_DOLU"}
+
+    ozetler, idler = [], []
+    for index, kayit in enumerate(kayitlar, 1):
+        kaynak_id = f"{belge_id}-{index:03d}"
+        kayit_id = _kayit_id("AI-TH", kaynak_id)
+        vade = _excel_tarihi(kayit.get("Vade")) if kayit.get("Vade") else ""
         degerler = {
-            "Kayit_ID": f"AI-TH-{uuid.uuid4().hex[:12].upper()}",
-            "Tarih": _excel_tarihi(kayit.get("Tarih")),
+            "Kayit_ID": kayit_id,
+            "Tarih": _excel_tarihi(kayit.get("Tarih"), zorunlu=True),
             "Faaliyet": kayit.get("Faaliyet"),
             "Proje": kayit.get("Proje") or "",
             "Cari_Tipi": kayit.get("Cari_Tipi"),
@@ -528,10 +465,10 @@ def _yaz_touche_ledger(wb, firma, veri, belge_id):
             "PB": kayit.get("PB") or "TL",
             "Kur": kayit.get("Kur") or 1,
             "Baglanti_ID": kayit.get("Baglanti_ID") or "",
-            "Vade": kayit.get("Vade") or "",
+            "Vade": vade,
             "Durum": kayit.get("Durum") or "Aktif",
             "Belge_Referans": belge_id,
-            "Aciklama": kayit.get("Aciklama") or "Telegram metin kaydi",
+            "Aciklama": kayit.get("Aciklama") or "CFO Asistanı kaydı",
             "Kaynak_Belge_ID": kaynak_id,
             "Kayit_Kaynak": "CFO Asistanı / AI / Kullanıcı Onaylı",
             "AI_Guven": kayit.get("_guven", 0),
@@ -539,146 +476,26 @@ def _yaz_touche_ledger(wb, firma, veri, belge_id):
         }
         satir = boslar[index - 1]
         for alan, sutun in sutunlar.items():
-            if alan in degerler:
-                cell = ws[f"{sutun}{satir}"]
-                cell.value = degerler[alan]
-                if isinstance(degerler[alan], str):
-                    cell.data_type = 's'
-    return {"basari": True, "yazilan": len(veri.get("kayitlar", [])), "hata": ""}
-
-
-def _inbox_satiri_yaz(ws, satir, kayit, belge_id, sutunlar, index):
-    belge_id_benzersiz = f"{belge_id}-{index+1:03d}"
-
-    degerler = {
-        "Belge_ID":         belge_id_benzersiz,
-        "Yukleme_Tarihi":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Kaynak":           "Telegram Bot / AI",
-        "Dosya_Metin_Ref":  kayit.get("_dosya_adi", ""),
-        "AI_Faaliyet":      kayit.get("Faaliyet", ""),
-        "AI_Proje":         kayit.get("Proje", ""),
-        "AI_Cari_Tipi":     kayit.get("Cari_Tipi", ""),
-        "AI_Cari":          kayit.get("Cari", ""),
-        "AI_Islem_Turu":    kayit.get("Islem_Turu", ""),
-        "Tutar":            kayit.get("Tutar", 0),
-        "PB":               kayit.get("PB", "TL"),
-        "Belge_Tarihi":     kayit.get("Tarih", ""),
-        "Vade":             kayit.get("Vade", ""),
-        "AI_Guven":         kayit.get("_guven", 0.90),
-        "Kullanici_Onayi":  kayit.get("_kullanici_onayi", "Onaylandı"),
-        "Hedef_Kayit_ID":   "",
-        "AI_Aciklama":      str(kayit.get("_dogrulama_ozeti") or kayit.get("Aciklama", ""))[:200],
-        "Belge_Hash":       kayit.get("_hash", ""),
-    }
-
-    for alan, sutun in sutunlar.items():
-        # Q sutunundaki Excel kontrol formulu sablonun parcasidir.
-        if alan == "Durum_Kontrol":
-            continue
-        ws[f"{sutun}{satir}"] = degerler.get(alan, "")
+            if alan not in degerler:
+                continue
+            if alan in ("Tarih", "Vade"):
+                _tarih_yaz(ws, f"{sutun}{satir}", degerler[alan])
+            else:
+                _hucre_yaz(ws, f"{sutun}{satir}", degerler[alan])
+        idler.append(kayit_id)
+        ozet = _kayit_ozeti({**kayit, "Baglanti_ID": degerler["Baglanti_ID"]}, kayit_id, kaynak_id)
+        ozet["satir"] = satir
+        ozetler.append(ozet)
+    sonuc = {"basari": True, "yazilan": len(kayitlar), "hata": "",
+             "kayit_idleri": idler, "kayit_ozetleri": ozetler}
+    if kismi:
+        sonuc["atlanan_kismi_dolu_satirlar"] = kismi
+    return sonuc
 
 
 # ============================================================
-# GURSAR YAZMA
+# Gursar belge adaptoru (dekont -> holding ledger)
 # ============================================================
-
-def _yaz_gursar(wb, firma, veri, belge_id):
-    """Gursar Excel'ine Odeme Gecmisi sayfasina yazar."""
-    ledger = firma["ana_ledger"]
-    sayfa_adi = ledger["sayfa"]
-
-    if sayfa_adi not in wb.sheetnames:
-        return {"basari": False, "yazilan": 0, "hata": f"Sayfa yok: {sayfa_adi}"}
-
-    ws = wb[sayfa_adi]
-
-    # Mükerrer kontrolü — Kaynak_Belge sutununda belge_id
-    belge_sutunu = ledger["sutunlar"]["Kaynak_Belge"]
-    if _mukerrer_mi(ws, belge_id, belge_sutunu, ledger["ilk_veri_satiri"]):
-        return {"basari": False, "yazilan": 0, "hata": f"Mukerrer belge: {belge_id}"}
-
-    # Ilk bos satir
-    bos_satir = _ilk_bos_satir(ws, "A", ledger["ilk_veri_satiri"], 200)
-
-    kayitlar = veri.get("kayitlar", [])
-    beklenen = list(ledger["sutunlar"].keys())
-    yazilan = 0
-
-    for i, kayit in enumerate(kayitlar):
-        kayit = _normalize_kayit(kayit, beklenen)
-
-        # Icerek bazli mukerrer kontrolu
-        mukerrer, satir_no = _mukerrer_kayit_mi(
-            ws, kayit, ledger["sutunlar"],
-            ledger["ilk_veri_satiri"], 200
-        )
-        if mukerrer:
-            # Cakisan kaydin detaylarini topla
-            sutunlar = ledger["sutunlar"]
-            mevcut_belge = ws[f"{sutunlar.get('Kaynak_Belge', 'L')}{satir_no}"].value
-            mevcut_tarih = ws[f"{sutunlar.get('Tarih', 'B')}{satir_no}"].value
-            mevcut_cari = ws[f"{sutunlar.get('Alici', 'E')}{satir_no}"].value
-            mevcut_tutar = ws[f"{sutunlar.get('Tutar_TL', 'G')}{satir_no}"].value
-            mevcut_islem = ws[f"{sutunlar.get('Islem_Turu', 'F')}{satir_no}"].value
-
-            detay = (
-                f"MUKERRER BELGE\n"
-                f"Sebep: Ayni Tarih + Cari + Tutar daha once Excel'de kayitli\n"
-                f"\n"
-                f"Cakisan kayit (Satir {satir_no}):\n"
-                f"  - Belge ID: {mevcut_belge}\n"
-                f"  - Tarih: {mevcut_tarih}\n"
-                f"  - Cari: {mevcut_cari}\n"
-                f"  - Islem: {mevcut_islem}\n"
-                f"  - Tutar: {mevcut_tutar} TL\n"
-                f"\n"
-                f"Yeni belge (bu fotograf):\n"
-                f"  - Tarih: {kayit.get('Tarih')}\n"
-                f"  - Cari: {kayit.get('Cari') or kayit.get('Alici')}\n"
-                f"  - Tutar: {kayit.get('Tutar_TL') or kayit.get('Tutar')} TL"
-            )
-            return {
-                "basari": False,
-                "yazilan": 0,
-                "hata": detay
-            }
-
-        satir = bos_satir + i
-        _gursar_satiri_yaz(ws, satir, kayit, belge_id, ledger["sutunlar"], i)
-        yazilan += 1
-
-    return {"basari": True, "yazilan": yazilan, "hata": ""}
-
-
-def _gursar_satiri_yaz(ws, satir, kayit, belge_id, sutunlar, index):
-    # Her belge ve satir icin cakismayan kayit ID.
-    kayit_id = f"AI-{uuid.uuid4().hex[:12].upper()}"
-
-    tarih_str = kayit.get("Tarih") or ""
-    saat_str = kayit.get("Saat") or datetime.now().strftime("%H:%M:%S")
-    tutar = kayit.get("Tutar_TL") or kayit.get("Tutar") or 0
-    banka_masrafi = kayit.get("Banka_Masrafi") or 0
-
-    degerler = {
-        "Kayit_ID":       kayit_id,
-        "Tarih":          tarih_str,
-        "Saat":           saat_str,
-        "Is_Kalemi":      kayit.get("Is_Kalemi") or "",
-        "Alici":          kayit.get("Alici") or kayit.get("Cari") or "",
-        "Islem_Turu":     kayit.get("Islem_Turu") or "",
-        "Tutar_TL":       tutar,
-        "Banka_Masrafi":  banka_masrafi,
-        "Islem_Kanali":   kayit.get("Islem_Kanali") or "",
-        "FAST_Sorgu_No":  kayit.get("FAST_Sorgu_No") or "",
-        "Kaynak_Belge":   belge_id,
-        "Durum":          kayit.get("Durum") or "Bekliyor",
-        "Proje":          kayit.get("Proje") or "",
-        "Maliyet_Grubu":  kayit.get("Maliyet_Grubu") or "",
-    }
-
-    for alan, sutun in sutunlar.items():
-        ws[f"{sutun}{satir}"] = degerler.get(alan, "")
-
 
 def _yaz_gursar_holding(wb, firma, veri, belge_id):
     """Gursar odemelerini holding ana ledger'ina ayni belge baglantisiyla yansitir."""
@@ -690,13 +507,14 @@ def _yaz_gursar_holding(wb, firma, veri, belge_id):
     ws = wb[sayfa_adi]
     sutunlar = ledger["sutunlar"]
     kaynak_sutunu = sutunlar["Kaynak_Belge_ID"]
-    ilk_satir = ledger["ilk_veri_satiri"]
+    ilk_satir, son_satir = ledger["ilk_veri_satiri"], config.LEDGER_SON_SATIR
     yazilacaklar = []
 
     for index, kayit in enumerate(veri.get("kayitlar", []), 1):
         kaynak_id = f"{belge_id}-{index:03d}"
-        if _mukerrer_mi(ws, kaynak_id, kaynak_sutunu, ilk_satir, 500):
-            return {"basari": False, "yazilan": 0, "hata": f"Holding'de mukerrer belge: {kaynak_id}"}
+        if _mukerrer_mi(ws, kaynak_id, kaynak_sutunu, ilk_satir, son_satir):
+            return {"basari": False, "yazilan": 0, "hata": f"Holding'de mukerrer belge: {kaynak_id}",
+                    "hata_kodu": "MUKERRER_BELGE"}
         yazilacaklar.append((kaynak_id, kayit, False))
         try:
             masraf = float(kayit.get("Banka_Masrafi") or 0)
@@ -705,9 +523,16 @@ def _yaz_gursar_holding(wb, firma, veri, belge_id):
         if masraf > 0:
             yazilacaklar.append((f"{kaynak_id}-MASRAF", {**kayit, "Tutar": masraf}, True))
 
-    bos_satir = _ilk_bos_satir(ws, "A", ilk_satir, 500)
+    alanlar = ["Kayit_ID", "Tarih", "Faaliyet", "Proje", "Cari_Tipi", "Cari", "Islem_Turu", "Hesap_Kasa",
+               "Tutar", "PB", "Kur", "Durum", "Belge_Referans", "Aciklama", "Kaynak_Belge_ID",
+               "Kayit_Kaynak", "AI_Guven", "Onay_Durumu"]
+    boslar, _ = _bos_satirlar(ws, sutunlar, LEDGER_KIMLIK_ALANLARI, alanlar, ilk_satir, son_satir)
+    if len(boslar) < len(yazilacaklar):
+        return {"basari": False, "yazilan": 0, "hata": "Holding kayıt merkezi kapasitesi dolu.",
+                "hata_kodu": "KAPASITE_DOLU"}
+    ozetler = []
     for ofset, (kaynak_id, kayit, banka_masrafi) in enumerate(yazilacaklar):
-        satir = bos_satir + ofset
+        satir = boslar[ofset]
         islem_turu = "Banka Masrafı" if banka_masrafi else {
             "Usta ödemesi": "Usta/Tedarikçi Ödemesi",
             "Ortak cari ödemesi": "Ortak Cari Ödemesi",
@@ -720,10 +545,10 @@ def _yaz_gursar_holding(wb, firma, veri, belge_id):
             "Banka masrafı": "Banka",
             "Diğer": "Diğer",
         }.get(kayit.get("Islem_Turu"), kayit.get("Cari_Tipi") or "Diğer")
-        kayit_id = f"AI-GUR-{uuid.uuid4().hex[:12].upper()}"
+        kayit_id = _kayit_id("AI-GUR", kaynak_id)
         degerler = {
             "Kayit_ID": kayit_id,
-            "Tarih": kayit.get("Tarih") or "",
+            "Tarih": _excel_tarihi(kayit.get("Tarih")) or "",
             "Faaliyet": kayit.get("Faaliyet") or "Gürsar İnşaat",
             "Proje": kayit.get("Proje") or "",
             "Cari_Tipi": cari_tipi,
@@ -743,89 +568,34 @@ def _yaz_gursar_holding(wb, firma, veri, belge_id):
         }
         for alan, sutun in sutunlar.items():
             # Formul sutunlarini ve tanimlanmayan sablon alanlarini koru.
-            if alan in degerler:
-                ws[f"{sutun}{satir}"] = degerler[alan]
-
-    return {"basari": True, "yazilan": len(yazilacaklar), "hata": ""}
-
-
-def _excel_tarihi(value):
-    if isinstance(value, datetime):
-        return value
-    for fmt in ('%d.%m.%Y','%d/%m/%Y','%d-%m-%Y','%Y-%m-%d','%d.%m.%y'):
-        try:
-            return datetime.strptime(str(value),fmt)
-        except ValueError:
-            pass
-    return value
-
-
-def _yaz_standart(wb, firma, veri, belge_id, firma_key):
-    from dogrulayici import deterministik_dogrula, FAIL
-    from guvenlik import finansal_fingerprint
-    check = deterministik_dogrula(veri, firma_key, 'finans_belgesi')
-    if check['durum'] == FAIL:
-        return {'basari':False, 'yazilan':0, 'hata':'; '.join(check['hatalar'])}
-    ws = wb['İşlem Kayıtları']
-    sutunlar = firma['ana_ledger']['sutunlar']
-    kayitlar = veri.get('kayitlar', [])
-    empty = [r for r in range(6,506) if ws[f'A{r}'].value in (None,'')]
-    if len(empty) < len(kayitlar):
-        return {'basari':False, 'yazilan':0, 'hata':'Faaliyet Excel kapasitesi dolu (500 kayıt).'}
-    hashes = {ws[f'W{r}'].value for r in range(6,506) if ws[f'W{r}'].value}
-    fingerprints = {ws[f'X{r}'].value for r in range(6,506) if ws[f'X{r}'].value}
-    belgeler = {ws[f'R{r}'].value for r in range(6,506) if ws[f'R{r}'].value}
-    for i,kayit in enumerate(kayitlar,1):
-        fingerprint = finansal_fingerprint(kayit, firma_key, 'finans_belgesi')
-        if kayit.get('_hash') in hashes or fingerprint in fingerprints or f'{belge_id}-{i:03d}' in belgeler:
-            return {'basari':False, 'yazilan':0, 'hata':'Mükerrer belge veya finansal fingerprint; kayıt yapılmadı.'}
-        fingerprints.add(fingerprint)
-        kayit['_fingerprint'] = fingerprint
-    for i,(row,kayit) in enumerate(zip(empty,kayitlar),1):
-        values = {**kayit, 'Kayit_ID':'AI-FA-'+uuid.uuid4().hex[:12].upper(),
-                  'Durum':'Gerçekleşti', 'Kaynak_Belge_ID':f'{belge_id}-{i:03d}',
-                  'Onay_Durumu':'Onaylandı', 'Kayit_Kaynak':'Telegram / '+firma['ad'],
-                  'AI_Guven':kayit.get('_guven',0), 'Belge_Hash':kayit.get('_hash',''),
-                  'Fingerprint':kayit['_fingerprint']}
-        for alan,col in sutunlar.items():
-            if col in ('M','N','O','P'):
+            if alan not in degerler:
                 continue
-            val = values.get(alan,'')
-            if alan == 'Tarih':
-                for fmt in ('%d.%m.%Y','%d/%m/%Y','%d-%m-%Y','%Y-%m-%d','%d.%m.%y'):
-                    try:
-                        val = datetime.strptime(str(val),fmt)
-                        break
-                    except ValueError:
-                        pass
-            cell = ws[f'{col}{row}']
-            cell.value = val
-            if isinstance(val,str):
-                cell.data_type = 's'
-    return {'basari':True, 'yazilan':len(kayitlar), 'hata':''}
+            if alan == "Tarih":
+                _tarih_yaz(ws, f"{sutun}{satir}", degerler[alan])
+            else:
+                _hucre_yaz(ws, f"{sutun}{satir}", degerler[alan])
+        ozet = _kayit_ozeti({**kayit, **{k: degerler[k] for k in ("Faaliyet", "Proje", "Islem_Turu", "Cari", "Hesap_Kasa", "Tutar", "PB")}},
+                            kayit_id, kaynak_id)
+        ozet["satir"] = satir
+        ozetler.append(ozet)
+    return {"basari": True, "yazilan": len(yazilacaklar), "hata": "", "kayit_ozetleri": ozetler}
 
 
-@kilitli
-def belge_kaydini_iptal_et(belge_id):
+# ============================================================
+# Iptal
+# ============================================================
+
+def belge_kaydini_iptal_et(belge_id, aktor="sistem"):
     """Belgeye bagli kayitlari silmeden Iptal/Reddedildi durumuna getirir."""
     belge_id = str(belge_id or "").strip()
     if not belge_id:
         return {"basari": False, "etkilenen": 0, "hata": "Belge ID bos"}
 
-    master_key = "touche_holding"
-    master = FIRMALAR[master_key]
-    yol = Path(master["excel"])
-    wb = None
-    yedek = None
-    gecici = None
-    degistirildi = False
-    try:
-        if not yol.exists():
-            return {"basari": False, "etkilenen": 0, "hata": f"Master Excel yok: {yol}"}
-        wb = load_workbook(yol)
-        etkilenen = 0
+    master = FIRMALAR["touche_holding"]
+    ledger, inbox = master["ana_ledger"], master["ai_inbox"]
 
-        ledger = master["ana_ledger"]
+    def degistir(wb):
+        etkilenen = 0
         ws = wb[ledger["sayfa"]]
         s = ledger["sutunlar"]
         for satir in range(ledger["ilk_veri_satiri"], (ws.max_row or 0) + 1):
@@ -838,7 +608,6 @@ def belge_kaydini_iptal_et(belge_id):
                 ws[f"{s['Onay_Durumu']}{satir}"] = "Reddedildi"
                 etkilenen += 1
 
-        inbox = master["ai_inbox"]
         ws = wb[inbox["sayfa"]]
         s = inbox["sutunlar"]
         for satir in range(inbox["ilk_veri_satiri"], (ws.max_row or 0) + 1):
@@ -846,67 +615,22 @@ def belge_kaydini_iptal_et(belge_id):
             if kimlik == belge_id or kimlik.startswith(belge_id + "-"):
                 ws[f"{s['Kullanici_Onayi']}{satir}"] = "Reddedildi"
                 etkilenen += 1
-
         if not etkilenen:
             return {"basari": False, "etkilenen": 0, "hata": f"Belge ID bulunamadi: {belge_id}"}
-
-        yedek = _yedek_al(master_key)
-        gecici = _gecici_yol(yol)
-        wb.save(gecici)
-        _gecici_exceli_dogrula(gecici, [ledger["sayfa"], inbox["sayfa"]])
-        wb.close()
-        wb = None
-        os.replace(gecici, yol)
-        degistirildi = True
-        audit_yaz("belge_iptal", belge_id=belge_id, etkilenen=etkilenen, dosyalar=[master_key])
         return {"basari": True, "etkilenen": etkilenen, "hata": ""}
+
+    izin = {
+        ledger["sayfa"]: {ledger["sutunlar"]["Durum"], ledger["sutunlar"]["Onay_Durumu"]},
+        inbox["sayfa"]: {inbox["sutunlar"]["Kullanici_Onayi"]},
+    }
+    try:
+        return guvenli_degistir(
+            degistir, aktor=aktor, kaynak="excel_yazici.belge_kaydini_iptal_et",
+            beklenen_sayfalar=[ledger["sayfa"], inbox["sayfa"]], degisim_izni=izin,
+            audit_ek=lambda sonuc: {"belge_id": belge_id, "etkilenen": sonuc.get("etkilenen", 0)},
+        )
+    except DepoHatasi as exc:
+        return {"basari": False, "etkilenen": 0, "hata": exc.mesaj, "hata_kodu": exc.kod}
     except Exception as exc:
-        if degistirildi and yedek:
-            try:
-                shutil.copy2(yedek, yol)
-            except Exception as geri_hata:
-                log.critical("Iptal geri alma basarisiz: %s", geri_hata)
-        audit_yaz("belge_iptal_hatasi", belge_id=belge_id, hata=str(exc))
+        log.exception("Belge iptali basarisiz")
         return {"basari": False, "etkilenen": 0, "hata": str(exc)}
-    finally:
-        if wb is not None:
-            try:
-                wb.close()
-            except Exception:
-                pass
-        if gecici:
-            try:
-                Path(gecici).unlink(missing_ok=True)
-            except OSError:
-                pass
-
-
-# ============================================================
-# YEDEKTEN GERI DONUS
-# ============================================================
-
-def yedekten_geri_don(firma_key, yedek_dosya_adi):
-    firma = FIRMALAR[firma_key]
-    excel = Path(firma["excel"])
-    yedek_klasor = Path(firma["yedek_klasoru"])
-    yedek = yedek_klasor / yedek_dosya_adi
-
-    if not yedek.exists():
-        return {"basari": False, "hata": f"Yedek yok: {yedek}"}
-
-    shutil.copy2(yedek, excel)
-    log.info(f"Geri donuldu: {yedek.name} -> {excel.name}")
-    return {"basari": True, "hata": ""}
-
-
-def yedek_listesi(firma_key):
-    firma = FIRMALAR[firma_key]
-    yedek_klasor = Path(firma["yedek_klasoru"])
-    if not yedek_klasor.exists():
-        return []
-    yedekler = sorted(yedek_klasor.glob("*.xlsx"),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-    return [{"ad": p.name,
-             "boyut_kb": round(p.stat().st_size / 1024, 1),
-             "tarih": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")}
-            for p in yedekler]

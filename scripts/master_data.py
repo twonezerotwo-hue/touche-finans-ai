@@ -4,7 +4,7 @@
 import logging
 from pathlib import Path
 from openpyxl import load_workbook
-from config import FIRMALAR
+from config import FIRMALAR, ana_excel_yolu
 from faaliyet_sema import anahtar
 
 log = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ def master_data_oku(firma_key):
         raise ValueError(f"Bilinmeyen firma: {firma_key}")
 
     firma = FIRMALAR[firma_key]
-    excel_yolu = Path(FIRMALAR["touche_holding"]["excel"])
+    excel_yolu = ana_excel_yolu()
 
     if not excel_yolu.exists():
         raise FileNotFoundError(f"Excel bulunamadi: {excel_yolu}")
