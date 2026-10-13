@@ -18,12 +18,14 @@ import os
 import threading
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
 import config
+import cfo_eslestirme as ES
 import cfo_niyet as N
+import proje_finansi as pf
 from cfo_varliklar import BELIRSIZ, ONERI, TEKIL, Katalog, coz, katalog_yukle, kismi_coz, norm
 from dogrulayici import FAIL, deterministik_dogrula
 from guvenlik import audit_yaz
@@ -119,6 +121,7 @@ def _bos_taslak(metin, aktor, tekrar_no=0, bugun=None):
         "hesap_kaynagi": "", "kur": None, "ortak_odemesi": False, "notlar": [], "adimlar": [],
         "bekleyen_alan": None, "bekleyen_yeni_cari": None, "onay_token": None, "belge_id": None,
         "belirsiz": {}, "oneri": {}, "tarih_hatasi": "", "kapsam": None,
+        "baglanti": None, "baglanti_karari": None, "eslesme": None, "mukerrer_onay": False, "yine_de": False,
     }
 
 
@@ -172,8 +175,13 @@ def _faaliyet(t, katalog):
     return katalog.faaliyet(t["faaliyet"]) if t["faaliyet"] else None
 
 
+def _ortak(t) -> bool:
+    """Ortak cari odemesi: metinde 'ortak' gecmesi YA DA odemeyi alan carinin tipinin 'Ortak' olmasi."""
+    return bool(t["ortak_odemesi"] or "ortak" in norm(t.get("cari_tipi") or ""))
+
+
 def _islem_turu(t, katalog):
-    return N.islem_turu_bul(t["islem"], katalog.islem_turleri, t["ortak_odemesi"]) if t["islem"] else None
+    return N.islem_turu_bul(t["islem"], katalog.islem_turleri, _ortak(t)) if t["islem"] else None
 
 
 def _kalem_gerekli(t, katalog) -> bool:
@@ -185,6 +193,93 @@ def _kalem_sorulabilir(t, katalog) -> bool:
     f = _faaliyet(t, katalog)
     return bool(f and t["proje"] and t["islem"] in (N.EXPENSE, N.PROJECT_COST, N.PAYABLE)
                 and katalog.kalemleri(f.kimlik, t["proje"]) and not t["kalem_id"] and not t["kalem_yok"])
+
+
+def _baglanti_turu(t):
+    """Acik borc/alacakla eslesmesi gereken islemler: BORC (cari/is kalemi odemesi), ALACAK (tahsilat/alacak silme)."""
+    if _ortak(t):
+        return None                       # ortak cari hesabi tedarikci/usta borcu degildir
+    if t["islem"] in (N.COUNTERPARTY_PAYMENT, N.WORK_ITEM_PAYMENT):
+        return ES.BORC
+    if t["islem"] in (N.COLLECTION, N.RECEIVABLE_ADJUSTMENT):
+        return ES.ALACAK
+    return None
+
+
+def _baglanti_gerekli(t, katalog) -> bool:
+    return bool(_baglanti_turu(t) and t["faaliyet"] and t["proje"] and t["cari"] and t["tutar"]
+                and any(norm(p.ad) == norm(t["proje"]) for p in katalog.projeleri(t["faaliyet"])))
+
+
+def _tutar_kurus(t, katalog) -> int:
+    kur = _kur(t, katalog) or Decimal(1)
+    return int((Decimal(t["tutar"]) * kur * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def _eslesme_hesapla(t, katalog) -> dict:
+    """Defterdeki acik borc/alacakla eslesme (salt-okunur). Defter okunamazsa EMIN OLUNAMAZ: tahmin yok, sorulur."""
+    try:
+        f = _faaliyet(t, katalog)
+        kalemler = [(k.ad, k.ekle("grup") or "") for k in katalog.kalemleri(f.kimlik, t["proje"])]
+        kalem = next(((k.ad, k.ekle("grup") or "") for k in katalog.kalemleri(f.kimlik, t["proje"])
+                      if k.kimlik == t["kalem_id"]), None) if t["kalem_id"] else None
+        return ES.eslestir(t["faaliyet"], t["proje"], t["cari"], _tutar_kurus(t, katalog), _baglanti_turu(t),
+                           t["kaynak_metin"], kalem, kalemler)
+    except Exception as exc:
+        audit_yaz("cfo_eslesme_hatasi", taslak_id=t["id"], hata=str(exc)[:200], aktor=t.get("aktor"))
+        return {"karar": "YOK", "adaylar": [], "acik_kalemler": [], "hata": str(exc)[:200]}
+
+
+def _kurus_metin(kurus) -> str:
+    return tl_metin(Decimal(int(kurus)) / 100)
+
+
+def _baglanti_cumlesi(b) -> str:
+    kelime = "borcu" if b["tur"] == ES.BORC else "alacağı"
+    return (f"{b['cari']} / {b['proje']} açık {kelime} kapatılıyor "
+            f"(kalan {_kurus_metin(b['kalan_kurus'])} → {_kurus_metin(b['kalan_sonra_kurus'])})")
+
+
+def _baglanti_ata(t, aday, kaynak, katalog):
+    tutar = _tutar_kurus(t, katalog)
+    t["baglanti"] = {"tur": _baglanti_turu(t), "cari": aday["cari"], "proje": aday["proje"],
+                     "kalan_kurus": aday["kalan_kurus"], "kalan_sonra_kurus": max(aday["kalan_kurus"] - tutar, 0),
+                     "skor": aday.get("skor", 0), "kanit": list(aday.get("kanit", [])), "kaynak": kaynak,
+                     "asiyor": tutar > aday["kalan_kurus"]}
+    t["baglanti_karari"] = "kapat"
+    not_ = "Açık kalem bağlantısı: " + _baglanti_cumlesi(t["baglanti"])
+    if not_ not in t["notlar"]:
+        t["notlar"].append(not_)
+
+
+def _baglanti_sifirla(t):
+    """Eslesmeyi etkileyen bir alan degisti: baglanti ve mukerrer onayi yeniden hesaplanir."""
+    t["baglanti"], t["baglanti_karari"], t["eslesme"], t["mukerrer_onay"] = None, None, None, False
+    t["notlar"] = [x for x in t["notlar"] if not x.startswith("Açık kalem bağlantısı:")
+                   and not x.startswith("Kapatılacak açık")]
+
+
+def _benzer_fisler(t, katalog) -> list[str]:
+    """Ayni gun/cari/proje/tutarli MUHASEBELESTI fisler (en fazla 3). Defter okunamazsa [] (bilgi eksikligi engel degildir)."""
+    try:
+        import sqlite3
+
+        import finans_cekirdegi as cek
+
+        if not Path(cek.DB_PATH).exists() or not (t["tutar"] and t["tarih"] and t["cari"]):
+            return []
+        kurus = _tutar_kurus(t, katalog)
+        con = sqlite3.connect(f"file:{cek.DB_PATH}?mode=ro", uri=True)
+        try:
+            return [x[0] for x in con.execute(
+                "SELECT DISTINCT f.fis_id FROM fisler f JOIN fis_satirlari s ON s.fis_id=f.fis_id "
+                "WHERE f.faaliyet_key=? AND f.tarih=? AND f.durum='MUHASEBELESTI' AND f.cari=? AND f.proje=? "
+                "AND (s.borc_kurus=? OR s.alacak_kurus=?) LIMIT 3",
+                (t["faaliyet"], t["tarih"], t["cari"], t["proje"] or "", kurus, kurus)).fetchall()]
+        finally:
+            con.close()
+    except Exception:
+        return []
 
 
 def _nakit_gerekli(t, katalog) -> bool:
@@ -254,6 +349,18 @@ def eksik_alanlar(t, katalog) -> list[str]:
             e.append("cari_tipi")
     if not t["tutar"]:
         e.append("tutar")
+    if not e and _baglanti_gerekli(t, katalog) and t.get("baglanti_karari") is None:
+        sonuc = _eslesme_hesapla(t, katalog)
+        if sonuc["karar"] == "ESLESTI":                    # tek, kanitli aday: otomatik (onay sifresi yine gerekir)
+            _baglanti_ata(t, sonuc["adaylar"][0], "otomatik", katalog)
+        elif sonuc["karar"] == "ACIK_YOK":                 # kapatilacak acik kalem HIC yok: belirsizlik degil
+            t["baglanti_karari"] = "yeni"
+            t["notlar"].append("Kapatılacak açık "
+                               + ("borç" if _baglanti_turu(t) == ES.BORC else "alacak")
+                               + " bulunmadığı için yeni kayıt olarak hazırlandı.")
+        else:
+            t["eslesme"] = sonuc
+            e.append("borc")
     if t["tarih_hatasi"] and not t["tarih"]:
         e.append("tarih")
     if t["islem"] and t["islem"] != N.PAYMENT and _nakit_gerekli(t, katalog) and not t["hesap"]:
@@ -266,6 +373,8 @@ def eksik_alanlar(t, katalog) -> list[str]:
             e.append("hesap")
     if _pb_coz(t, katalog) != "TL" and not _kur(t, katalog):
         e.append("kur")
+    if not e and not (t.get("yine_de") or t.get("mukerrer_onay")) and _benzer_fisler(t, katalog):
+        e.append("mukerrer_onay")                          # mukerrer ihtimali: taslak acmadan once sorulur
     return e
 
 
@@ -284,6 +393,36 @@ def _kur(t, katalog):
 
 def _secenek(id_, etiket, aciklama=""):
     return {"id": id_, "etiket": etiket, "aciklama": aciklama}
+
+
+def _borc_sorusu(t, katalog) -> dict:
+    tur = _baglanti_turu(t)
+    kelime = "borcu" if tur == ES.BORC else "alacağı"
+    s = _eslesme_hesapla(t, katalog)
+    t["eslesme"] = s
+
+    def ad(a):
+        return f"{a['cari']} / {a['proje']} / kalan {_kurus_metin(a['kalan_kurus'])}"
+
+    if s["karar"] == "ONAY":
+        a = s["adaylar"][0]
+        uyari = " Dikkat: tutar kalanı aşıyor; fazlası avans olarak kalır." if a["asiyor"] else ""
+        metin = (f"Emin değilim. Bu işlem şu açık {kelime} kapatıyor olabilir: {ad(a)}. "
+                 f"Gerekçe: {'; '.join(a['kanit'])}.{uyari} Bu {kelime} kapatayım mı, yoksa yeni kayıt mı açalım?")
+        secenekler = [_secenek("kapat:" + a["cari"], f"Evet, {a['cari']} {kelime} kapat", ad(a)),
+                      _secenek("yeni", "Hayır, yeni kayıt aç")]
+    elif s["karar"] == "BELIRSIZ":
+        metin = "Emin değilim, şu açık kayıtlar var; hangisini kapatayım?"
+        secenekler = [_secenek("kapat:" + a["cari"], ad(a), "; ".join(a["kanit"])) for a in s["adaylar"][:6]]
+        secenekler.append(_secenek("yeni", "Hiçbiri — yeni kayıt aç"))
+    else:
+        metin = ("Hiç eşleşme bulamadım. Bu işlem mevcut bir borç/alacak/hakediş kaydını mı kapatıyor, "
+                 "yoksa yeni bir kayıt mı açalım?")
+        if s.get("hata"):
+            metin = "Mevcut açık kayıtlara erişemedim, bu yüzden emin olamıyorum. " + metin
+        secenekler = [_secenek("kapat:" + a["cari"], f"{ad(a)} kaydını kapatıyor") for a in s["acik_kalemler"][:6]]
+        secenekler.append(_secenek("yeni", "Yeni kayıt aç"))
+    return {"alan": "borc", "metin": metin, "secenekler": secenekler}
 
 
 def soru_uret(t, alan, katalog: Katalog) -> dict:
@@ -322,9 +461,11 @@ def soru_uret(t, alan, katalog: Katalog) -> dict:
         return {"alan": alan, "metin": "Hangi iş kalemi?", "secenekler": secenekler}
     if alan == "cari":
         carileri = katalog.carileri(t["faaliyet"])
-        musteri_islem = t["islem"] in (N.COLLECTION, N.RECEIVABLE, N.PROJECT_REVENUE, N.INCOME)
+        musteri_islem = t["islem"] in (N.COLLECTION, N.RECEIVABLE, N.PROJECT_REVENUE, N.INCOME,
+                                       N.RECEIVABLE_ADJUSTMENT)
         carileri = sorted(carileri, key=lambda c: ("musteri" in norm(c.ekle("cari_tipi"))) != musteri_islem)
         metin = {N.COLLECTION: "Kimden tahsil edildi?", N.RECEIVABLE: "Hangi müşteri/cari için?",
+                 N.RECEIVABLE_ADJUSTMENT: "Hangi müşteri/cari alacağı siliniyor?",
                  N.INCOME: "Gelir hangi cariden?", N.EXPENSE: "Gider hangi cariye/tedarikçiye ait?",
                  N.PROJECT_COST: "Gider hangi cariye/tedarikçiye ait?"}.get(t["islem"], "Kime ödeme yapıldı?")
         secenekler = [_secenek(c.ad, c.ad, c.ekle("cari_tipi") or "") for c in carileri]
@@ -350,6 +491,14 @@ def soru_uret(t, alan, katalog: Katalog) -> dict:
         if not hesaplar:
             metin = f"Bu faaliyette {pb} para birimli hesap/kasa tanımlı değil."
         return {"alan": alan, "metin": metin, "secenekler": [_secenek(h.ad, h.ad, pb) for h in hesaplar]}
+    if alan == "borc":
+        return _borc_sorusu(t, katalog)
+    if alan == "mukerrer_onay":
+        benzer = ", ".join(_benzer_fisler(t, katalog))
+        return {"alan": alan,
+                "metin": (f"Aynı gün, aynı cari, aynı proje ve aynı tutarla bir kayıt zaten var ({benzer}). "
+                          "Bu mükerrer olabilir; yine de yeni bir kayıt taslağı hazırlansın mı?"),
+                "secenekler": [_secenek("evet", "Yine de taslak hazırla"), _secenek("hayir", "Hayır, vazgeç")]}
     if alan == "kur":
         return {"alan": alan, "metin": f"{_pb_coz(t, katalog)} için kur tanımlı değil. 1 {_pb_coz(t, katalog)} kaç TL?",
                 "secenekler": [], "serbest": True}
@@ -394,6 +543,8 @@ def _uygula(t, alan, deger, katalog: Katalog, kaynak: str):
     deger = str(deger or "").strip()
     if not deger:
         raise ValueError("Boş cevap.")
+    if alan in ("faaliyet", "proje", "islem", "kalem", "cari", "cari_yeni_onay", "cari_tipi", "tutar", "kur"):
+        _baglanti_sifirla(t)                 # eslesmeyi etkileyen bir bilgi degisiyor
     if alan == "faaliyet":
         f = katalog.faaliyet(deger) if kaynak == "secim" else _entity_sec(
             [x for x in katalog.faaliyetler if _kapsamda(t, x.kimlik)], deger, "Faaliyet")
@@ -494,6 +645,13 @@ def _uygula(t, alan, deger, katalog: Katalog, kaynak: str):
             raise ValueError("Hesap bu faaliyette/para biriminde bulunamadı.")
         t["hesap"], t["hesap_kaynagi"] = h.ad, "secim"
         valor = h.ad
+    elif alan == "borc":
+        valor = _borc_cevabi(t, deger, katalog, kaynak)
+    elif alan == "mukerrer_onay":
+        if norm(deger) not in ("evet", "yine de", "yine_de", "e", "tamam"):
+            raise ValueError("Devam etmek için 'Yine de taslak hazırla'yı seçin ya da vazgeçin.")
+        t["mukerrer_onay"] = True
+        valor = "mükerrer uyarısına rağmen devam"
     elif alan == "kur":
         try:
             kur = Decimal(deger.replace(",", "."))
@@ -508,6 +666,37 @@ def _uygula(t, alan, deger, katalog: Katalog, kaynak: str):
     t["belirsiz"].pop(alan, None)
     t["oneri"].pop(alan, None)
     return valor
+
+
+def _borc_cevabi(t, deger, katalog, kaynak):
+    """'borc' sorusunun cevabi: kapat:<cari> | yeni (serbest metinde evet/hayir/cari adi de anlasilir)."""
+    s = _eslesme_hesapla(t, katalog)
+    sade = norm(deger)
+    secim = deger
+    if kaynak != "secim":
+        if sade in ("yeni", "yeni kayit", "hayir", "h", "hicbiri"):
+            secim = "yeni"
+        elif sade in ("evet", "e", "tamam", "kapat") and len(s["adaylar"]) == 1:
+            secim = "kapat:" + s["adaylar"][0]["cari"]
+        else:
+            bulunan = [a for a in s["acik_kalemler"]
+                       if norm(a["cari"]) and (norm(a["cari"]) in sade or sade in norm(a["cari"]))]
+            if len(bulunan) == 1:
+                secim = "kapat:" + bulunan[0]["cari"]
+            else:
+                raise ValueError("Cevabı anlayamadım. Listeden bir açık kaydı seçin ya da 'yeni kayıt' deyin.")
+    if secim == "yeni":
+        t["baglanti"], t["baglanti_karari"] = None, "yeni"
+        return "yeni kayıt (mevcut borca/alacağa bağlanmadı)"
+    if not secim.startswith("kapat:"):
+        raise ValueError("Geçersiz seçim.")
+    hedef = secim[len("kapat:"):]
+    aday = next((a for a in s["adaylar"] if norm(a["cari"]) == norm(hedef)), None) \
+        or next((a for a in s["acik_kalemler"] if norm(a["cari"]) == norm(hedef)), None)
+    if aday is None:
+        raise ValueError("Bu açık kayıt artık bulunamadı; lütfen yeniden seçin.")
+    _baglanti_ata(t, aday, "kullanici_secimi" if kaynak == "secim" else "kullanici_metni", katalog)
+    return "kapat: " + _baglanti_cumlesi(t["baglanti"])
 
 
 def _islem_metinden(metin, katalog):
@@ -527,6 +716,8 @@ def _islem_metinden(metin, katalog):
 
 def _islem_tipi_turden(islem_turu):
     sade = norm(islem_turu)
+    if "alacak duzeltme" in sade or "mahsup" in sade:
+        return N.RECEIVABLE_ADJUSTMENT
     if "tahsilat" in sade:
         return N.COLLECTION
     if "hakedis" in sade:
@@ -554,13 +745,16 @@ def ozet(t, katalog: Katalog) -> dict:
         "tarih": datetime.fromisoformat(t["tarih"]).strftime("%d.%m.%Y") if t["tarih"] else None,
         "tarih_notu": "Tarih belirtilmediği için bugün varsayıldı" if t["tarih_kaynagi"] == "varsayilan_bugun" else "",
         "hesap": t["hesap"], "hesap_notu": t["hesap_kaynagi"] if t["hesap_kaynagi"].startswith("otomatik") else "",
+        "baglanti": (_baglanti_cumlesi(t["baglanti"]) if t.get("baglanti")
+                     else ("yeni kayıt — mevcut borca/alacağa bağlanmadı" if t.get("baglanti_karari") == "yeni" else None)),
     }
 
 
 def _ozet_satirlari(o: dict) -> list[str]:
     s = []
     for etiket, anahtar in (("Faaliyet", "faaliyet"), ("Proje", "proje"), ("İşlem", "islem"), ("İş kalemi", "kalem"),
-                            ("Cari", "cari"), ("Tutar", "tutar"), ("Tarih", "tarih"), ("Hesap", "hesap")):
+                            ("Cari", "cari"), ("Tutar", "tutar"), ("Tarih", "tarih"), ("Hesap", "hesap"),
+                            ("Bağlantı", "baglanti")):
         if o.get(anahtar):
             ek = ""
             if anahtar == "tarih" and o["tarih_notu"]:
@@ -569,6 +763,44 @@ def _ozet_satirlari(o: dict) -> list[str]:
                 ek = f" ({o['hesap_notu']})"
             s.append(f"{etiket}: {o[anahtar]}{ek}")
     return s
+
+
+def _baglanti_satirlari(t) -> list[str]:
+    """Kullaniciya acik: kayit yeni gider/gelir mi, yoksa mevcut borc/alacak kapama mi."""
+    b = t.get("baglanti")
+    if b:
+        borc = b["tur"] == ES.BORC
+        if t["islem"] == N.RECEIVABLE_ADJUSTMENT:
+            ilk, ikinci = "Bu kayıt yeni gelir değil; mevcut alacağın silinmesi (düzeltme) olarak işlendi.", "Bu işlem şu açık alacağı siliyor: "
+        elif borc:
+            ilk, ikinci = "Bu kayıt yeni gider değil; mevcut borç kapama olarak işlendi.", "Bu ödeme şu açık borcu kapatıyor: "
+        else:
+            ilk, ikinci = "Bu kayıt yeni gelir değil; mevcut alacak kapama olarak işlendi.", "Bu tahsilat şu açık alacağı kapatıyor: "
+        satirlar = [ilk, ikinci + f"{b['cari']} / {b['proje']} / kalan {_kurus_metin(b['kalan_kurus'])} "
+                    f"→ {_kurus_metin(b['kalan_sonra_kurus'])}"]
+        if b.get("asiyor"):
+            satirlar.append("Dikkat: tutar kalan bakiyeyi aşıyor; fazlası avans/fazla tahsilat olarak kalır.")
+        return satirlar
+    if t.get("baglanti_karari") == "yeni":
+        return ["Bu kayıt mevcut bir borca/alacağa bağlanmadı; yeni kayıt olarak hazırlandı."]
+    return []
+
+
+_EKSIK_ETIKETLERI = {
+    "faaliyet": "Faaliyet adı?", "proje": "Proje adı?", "islem": "İşlem türü (ödeme, gider, tahsilat…)?",
+    "kalem": "Hangi iş kalemine bağlanacak?", "cari": "Cari (kime/kimden)?", "cari_yeni_onay": "Yeni cari olarak eklensin mi?",
+    "cari_tipi": "Cari tipi?", "tutar": "Tutar ve para birimi?", "tarih": "İşlem tarihi?",
+    "hesap": "Para hangi kasa/banka hesabından çıktı veya nereye girdi?", "kur": "Kur?",
+    "borc": "Bu yeni kayıt mı, mevcut borç/alacak kapama mı?",
+    "mukerrer_onay": "Aynı kayıt zaten var; yine de taslak hazırlansın mı?",
+}
+
+
+def _eksik_listesi(t, katalog) -> list[str]:
+    try:
+        return [_EKSIK_ETIKETLERI.get(a, a) for a in eksik_alanlar(t, katalog)]
+    except Exception:
+        return []
 
 
 def _yanit(t, katalog, soru=None, kayit_taslagi=None, hata=None, uyarilar=None) -> dict:
@@ -580,12 +812,17 @@ def _yanit(t, katalog, soru=None, kayit_taslagi=None, hata=None, uyarilar=None) 
     if kayit_taslagi:
         cevap.append("Kayıt taslağını hazırladım:")
         cevap.extend(satirlar)
+        cevap.extend(_baglanti_satirlari(t))
         cevap.extend(f"• {u}" for u in (uyarilar or []))
         cevap.append("Doğruysa 'Şifreyle Onayla'ya basın. Onaydan önce Excel'e hiçbir şey yazılmadı.")
     elif soru:
         if satirlar:
             cevap.append("Şimdiye kadar anladıklarım:")
             cevap.extend(satirlar)
+        eksikler = _eksik_listesi(t, katalog)
+        if eksikler:
+            cevap.append("Bu kaydı yazmadan önce şu bilgi eksik:")
+            cevap.extend(f"{i}. {x}" for i, x in enumerate(eksikler, 1))
         cevap.append(soru["metin"])
     return {
         "cevap": "\n".join(cevap), "niyet": "cfo_sihirbaz", "guven": "Yüksek", "llm": "deterministik",
@@ -626,7 +863,7 @@ def _aciklama(t, katalog):
     if t.get("kaynak_metin") and len(norm(t["kaynak_metin"]).split()) >= 4 and t["tutar"]:
         return t["kaynak_metin"].strip()[:500]
     o = ozet(t, katalog)
-    return " | ".join(_ozet_satirlari({**o, "tarih": None, "hesap": None}))[:500]
+    return " | ".join(_ozet_satirlari({**o, "tarih": None, "hesap": None, "baglanti": None}))[:500]
 
 
 def kayit_olustur(t, katalog: Katalog) -> dict:
@@ -647,38 +884,26 @@ def kayit_olustur(t, katalog: Katalog) -> dict:
         kayit["Is_Kalemi_ID"] = t["kalem_id"]
         kayit["Aciklama"] = f"[{t['kalem_ad']}] " + kayit["Aciklama"]
         kayit["Aciklama"] = kayit["Aciklama"][:500]
+    if t.get("baglanti"):
+        b = t["baglanti"]
+        # Odemeyi alan kisi ``Cari`` olarak KALIR; kapattigi acik borc/alacak defterde kalici etiketle baglanir.
+        kayit["Aciklama"] = (pf.baglanti_etiketi(b["tur"], b["cari"]) + kayit["Aciklama"])[:500]
+        kayit["_baglanti"] = {k: b.get(k) for k in ("tur", "cari", "proje", "kalan_kurus", "kalan_sonra_kurus",
+                                                    "skor", "kaynak")}
     otomatik = []
     if t["hesap_kaynagi"].startswith("otomatik"):
         otomatik.append("Hesap " + t["hesap_kaynagi"][len("otomatik: "):] + f": {t['hesap']}")
-    otomatik += [x for x in t["notlar"] if x.startswith("Faaliyet projeden") or x.startswith("Proje ")]
+    otomatik += [x for x in t["notlar"] if x.startswith(("Faaliyet projeden", "Proje ", "Açık kalem", "Kapatılacak açık"))]
     if otomatik:
         kayit["_otomatik_eslesmeler"] = otomatik
     return kayit
 
 
 def _benzer_kayit_uyarisi(t, kayit, katalog):
-    """Ayni gun/cari/proje/tutarli kayit zaten defterde varsa uyarir (engellemez)."""
-    try:
-        import sqlite3
-
-        import finans_cekirdegi as cek
-
-        if not Path(cek.DB_PATH).exists():
-            return []
-        kurus = int((Decimal(t["tutar"]) * (_kur(t, katalog) or 1) * 100).quantize(Decimal(1)))
-        con = sqlite3.connect(f"file:{cek.DB_PATH}?mode=ro", uri=True)
-        try:
-            satirlar = con.execute(
-                "SELECT DISTINCT f.fis_id FROM fisler f JOIN fis_satirlari s ON s.fis_id=f.fis_id "
-                "WHERE f.faaliyet_key=? AND f.tarih=? AND f.durum='MUHASEBELESTI' AND f.cari=? AND f.proje=? "
-                "AND (s.borc_kurus=? OR s.alacak_kurus=?) LIMIT 3",
-                (t["faaliyet"], t["tarih"], kayit["Cari"], kayit["Proje"], kurus, kurus)).fetchall()
-        finally:
-            con.close()
-        return [f"Dikkat: aynı gün, aynı cari ve aynı tutarla kayıt zaten var ({x[0]}). Yinelenen bir giriş değilse onaylayın."
-                for x in satirlar[:1]]
-    except Exception:
-        return []
+    """Ayni gun/cari/proje/tutarli kayit zaten defterde varsa uyari metni (taslak onay asamasinda gosterilir)."""
+    fisler = _benzer_fisler(t, katalog)
+    return [f"Dikkat: aynı gün, aynı cari ve aynı tutarla kayıt zaten var ({fisler[0]}). "
+            "Yinelenen bir giriş değilse onaylayın."] if fisler else []
 
 
 def hazirla(t, katalog: Katalog) -> dict:
@@ -696,7 +921,8 @@ def hazirla(t, katalog: Katalog) -> dict:
     benzer = _benzer_kayit_uyarisi(t, kayit, katalog)
     dogrulama["uyarilar"].extend(benzer)
     normalize = "|".join([t["islem"] or "", firma_key, norm(t["proje"]), norm(t["cari"]), norm(t["kalem_id"]),
-                          t["tutar"], _pb_coz(t, katalog), t["tarih"], norm(t["hesap"])])
+                          t["tutar"], _pb_coz(t, katalog), t["tarih"], norm(t["hesap"])]
+                         + (["kapat:" + norm(t["baglanti"]["cari"])] if t.get("baglanti") else []))
     belge_id = f"{firma_key[:4].upper()}-CHAT-{t['id']}"
     belge_hash = hashlib.sha256(f"{normalize}|{t['tekrar_no']}".encode("utf-8")).hexdigest()
     for k in veri["kayitlar"]:
@@ -718,7 +944,9 @@ def hazirla(t, katalog: Katalog) -> dict:
     audit_yaz("cfo_taslak_hazir", taslak_id=t["id"], belge_id=belge_id, orijinal_talimat=t["kaynak_metin"],
               normalize_komut=normalize, faaliyet=firma_key, proje=t["proje"], cari=t["cari"],
               islem=t["islem"], tutar=t["tutar"], pb=_pb_coz(t, katalog), tarih=t["tarih"], aktor=t["aktor"],
-              durum=dogrulama["durum"], skor=dogrulama["skor"])
+              durum=dogrulama["durum"], skor=dogrulama["skor"],
+              baglanti_cari=(t.get("baglanti") or {}).get("cari"), baglanti_karari=t.get("baglanti_karari"),
+              baglanti_kaynagi=(t.get("baglanti") or {}).get("kaynak"))
     kuyruk = ui._kuyruga_al(hazir, t["aktor"], "sohbet")
     t["durum"], t["onay_token"], t["belge_id"] = ONAY_BEKLIYOR, kuyruk["token"], belge_id
     return {"kuyruk": kuyruk, "uyarilar": dogrulama["uyarilar"][:4]}
@@ -772,6 +1000,7 @@ def baslat(niyet: N.Niyet, aktor, katalog: Katalog | None = None, yine_de=False,
             }
         t = _bos_taslak(niyet.metin, aktor, tekrar_no=len(yapilmis) + len(mevcut) if yine_de else 0, bugun=bugun)
         t["kapsam"] = list(kapsam) if kapsam else None
+        t["yine_de"] = bool(yine_de)                  # kullanici 'Yine de ekle' dedi: mukerrer sorulmaz
         _niyetten_uygula(t, niyet, katalog)
         if "tarih_hatasi" in t and t["tarih_hatasi"]:
             t["tarih"] = None
@@ -816,6 +1045,16 @@ def cevapla(taslak_id, alan, deger, aktor, kaynak="secim", katalog: Katalog | No
         alan = alan or beklenen
         if not alan:
             raise ValueError("Cevaplanacak açık bir soru yok.")
+        if alan == "mukerrer_onay" and norm(str(deger)) in ("hayir", "vazgec", "iptal", "h"):
+            t["durum"], t["guncelleme"] = IPTAL, _simdi()
+            _adim_kaydet(t, alan, "mükerrer olabileceği için vazgeçildi", kaynak)
+            _kaydet()
+            audit_yaz("cfo_taslak_iptal", taslak_id=t["id"], onceki_durum=TOPLANIYOR, neden="mukerrer", aktor=str(aktor))
+            return {"cevap": "Mükerrer olabileceği için vazgeçildi; kayıt taslağı oluşturulmadı. "
+                             "Excel'e hiçbir kayıt yazılmadı.",
+                    "niyet": "kayit_reddi", "taslak_kapat": True, "degisiklik_yapildi": False,
+                    "cfo": {"taslak_id": t["id"], "durum": IPTAL}, "kanitlar": [], "aksiyonlar": [],
+                    "guven": "Yüksek", "llm": "deterministik"}
         try:
             gosterim = _uygula(t, alan, deger, katalog, kaynak)
         except ValueError as exc:
@@ -918,6 +1157,8 @@ def duzelt(taslak_id, metin, aktor, katalog: Katalog | None = None) -> dict:
                     "niyet": "kayit_eksikleri_bekliyor", "guven": "Yüksek", "llm": "deterministik",
                     "degisiklik_yapildi": False, "kanitlar": [], "aksiyonlar": [],
                     "cfo": {"taslak_id": t["id"], "durum": t["durum"]}}
+        if set(degisti) & {"tutar", "proje", "iş kalemi", "cari"}:
+            _baglanti_sifirla(t)                      # baglanti/mukerrer onayi yeni bilgiyle yeniden degerlendirilir
         if t["durum"] == ONAY_BEKLIYOR and t["onay_token"]:
             try:
                 ui.reddet(t["onay_token"], aktor)       # eski kuyruk girdisi kapanir; yeni onay yeni sifre ister

@@ -27,6 +27,7 @@ INCOME = "INCOME"
 RECEIVABLE = "RECEIVABLE"
 PROJECT_REVENUE = "PROJECT_REVENUE"
 COLLECTION = "COLLECTION"
+RECEIVABLE_ADJUSTMENT = "RECEIVABLE_ADJUSTMENT"
 TRANSFER = "TRANSFER"
 CORRECTION = "CORRECTION"
 REVERSAL = "REVERSAL"
@@ -38,6 +39,7 @@ ISLEM_SECENEKLERI = [
     (WORK_ITEM_PAYMENT, "İş kalemi ödemesi", "Projenin bir iş kalemi için yapılan ödeme"),
     (EXPENSE, "Gider", "Gider tahakkuku (henüz ödenmemiş maliyet)"),
     (COLLECTION, "Tahsilat", "Müşteriden alınan para"),
+    (RECEIVABLE_ADJUSTMENT, "Alacak silme / düzeltme", "Tahsil edilmeyecek veya mahsup edilen alacak (kasa/banka hareketi yok)"),
     (RECEIVABLE, "Hakediş / gelir tahakkuku", "Kazanılan ama henüz tahsil edilmemiş gelir"),
     (INCOME, "Diğer gelir (nakit)", "Doğrudan kasa/bankaya giren gelir"),
 ]
@@ -55,6 +57,7 @@ ISLEM_TURU_ADAYLARI = {
     PROJECT_COST: ["Gider Tahakkuku"],
     PAYABLE: ["Gider Tahakkuku"],
     COLLECTION: ["Tahsilat"],
+    RECEIVABLE_ADJUSTMENT: ["Alacak Düzeltme / Mahsup"],
     RECEIVABLE: ["Hakediş / Gelir Tahakkuku"],
     PROJECT_REVENUE: ["Hakediş / Gelir Tahakkuku"],
     INCOME: ["Diğer Gelir"],
@@ -203,6 +206,8 @@ def islem_cikar(sade: str):
         return REVERSAL
     if _icerir(sade, ("duzeltme kaydi", "kaydi duzelt", "yanlis kayit")):
         return CORRECTION
+    if _icerir(sade, ("alacak sil", "alacagi sil", "alacagin sil", "alacak mahsup", "alacak duzelt")):
+        return RECEIVABLE_ADJUSTMENT
     if _icerir(sade, ("tahsilat", "tahsil et", "tahsil edil", "odeme aldik", "odeme aldim", "odeme geldi",
                       "para geldi", "hesabimiza gecti", "hesaba gecti")):
         return COLLECTION

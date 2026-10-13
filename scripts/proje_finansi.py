@@ -18,6 +18,7 @@ fisler gider/odeme/tahsilat sayilmaz; holding toplamlarinda 131/331 satirlari el
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -252,12 +253,34 @@ def _kalem_tablosu(kalemler, fisler_kalem, ham_kalem):
     return sonuc
 
 
+_BAGLANTI_RE = re.compile(r"\[(Borç|Alacak) kapama: (?P<cari>[^\]\r\n]{1,100})\]")
+
+
+def baglanti_etiketi(tur, cari) -> str:
+    """CFO asistaninin acik borc/alacak kapama kaydina koydugu, defterde kalici etiket (``Aciklama`` basinda)."""
+    return f"[{'Borç' if tur == 'BORC' else 'Alacak'} kapama: {cari}] "
+
+
+def baglanti_coz(aciklama):
+    """Aciklamadaki kapama etiketinden ('BORC'|'ALACAK', cari) doner; yoksa None."""
+    m = _BAGLANTI_RE.search(str(aciklama or "")[:300])
+    return ("BORC" if m.group(1) == "Borç" else "ALACAK", m.group("cari").strip()) if m else None
+
+
+def etkin_cari(f) -> str:
+    """Cari bakiyesi icin fisin ait oldugu cari: kapama etiketi varsa kapattigi borcun/alacagin cari'si,
+    yoksa fisin kendi cari'si. (Fisin ``cari`` alani odemeyi alan kisi olarak KALIR.)"""
+    b = baglanti_coz(f.get("aciklama"))
+    return b[1] if b else f["cari"]
+
+
 def _cari_bakiyeleri(fisler):
     grup: dict[str, list] = {}
     for f in fisler:
-        if f["ic"] or not f["cari"]:
+        cari = etkin_cari(f)
+        if f["ic"] or not cari:
             continue
-        g = grup.setdefault(f["cari"], [])
+        g = grup.setdefault(cari, [])
         g.append(f)
     sonuc = []
     for cari, fl in grup.items():

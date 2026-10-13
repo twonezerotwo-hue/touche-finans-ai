@@ -27,7 +27,14 @@ PARASAL_HESAPLAR = {"100", "101", "102", "120", "131", "159", "300", "320", "331
 
 
 def _ticari_borc_grubu(cari, aciklama):
-    """Ödemeyi tahakkuk ettiği iş/maliyet grubuyla aynı açık kalemde netleştirir."""
+    """Ödemeyi tahakkuk ettiği iş/maliyet grubuyla aynı açık kalemde netleştirir.
+
+    CFO asistanının açık borç kapama etiketi (``[Borç kapama: X]``) AÇIK bir bağlantıdır ve açıklama taramasından önce gelir."""
+    from proje_finansi import baglanti_coz
+
+    bagli = baglanti_coz(aciklama)
+    if bagli and bagli[0] == "BORC":
+        return bagli[1]
     metin = _norm(f"{cari or ''} {aciklama or ''}")
     gruplar = []
     for firma in FIRMALAR.values():

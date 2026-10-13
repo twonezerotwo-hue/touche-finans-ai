@@ -77,7 +77,7 @@ Re-run `durum` until MAIN is the file that holds your data. Do not rename the pr
 ```powershell
 py -3.12 -m pytest -q                    # expect: 301 passed, 1 skipped (the 7 browser tests skip instead of pass if Chromium is not installed)
 ruff check scripts tests --select F,E9   # All checks passed
-py -3.12 -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_defter_mutabakati.py scripts/cfo_niyet.py scripts/cfo_sohbet.py scripts/cfo_sorgu.py scripts/cfo_varliklar.py scripts/cfo_yonlendirici.py scripts/proje_finansi.py scripts/excel_yazici.py scripts/windows_dogrulama.py
+py -3.12 -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_defter_mutabakati.py scripts/cfo_niyet.py scripts/cfo_sohbet.py scripts/cfo_sorgu.py scripts/cfo_varliklar.py scripts/cfo_yonlendirici.py scripts/proje_finansi.py scripts/excel_yazici.py scripts/windows_dogrulama.py scripts/cfo_eslestirme.py
 ```
 The tests run in a temp directory and abort if the MAIN path points at your user folder. **STOP** if anything fails: fix the real cause, never weaken a financial test.
 

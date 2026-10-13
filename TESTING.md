@@ -6,7 +6,7 @@ python -m pytest -q                      # whole suite (~40 s)
 ruff check scripts tests --select F,E9   # lint used in this repo
 python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_defter_mutabakati.py \
     scripts/cfo_niyet.py scripts/cfo_sohbet.py scripts/cfo_sorgu.py scripts/cfo_varliklar.py \
-    scripts/cfo_yonlendirici.py scripts/proje_finansi.py scripts/excel_yazici.py     # clean
+    scripts/cfo_yonlendirici.py scripts/proje_finansi.py scripts/excel_yazici.py scripts/cfo_eslestirme.py     # clean
 ```
 Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests` also works for the non-browser tests.
 
