@@ -12,6 +12,15 @@ ya da degistirilen satirlar deftere kendiliginden yansimaz. Bu modul farki gorun
 Eslestirme anahtari:
   * Kaynak_Belge_ID dolu (uygulamanin yazdigi)  -> fis (belge_id, kayit_sira) = ("<belge>", NNN)
   * Bos (elle girilmis / eski)                  -> belge_id ``LEGACY-<Kayit_ID>``, sira 1
+
+Beklenen Excel satiri: Durum ``Aktif`` / bos / ``Gerçekleşti``. ``Gerçekleşti``, Gursar belge aktariminin
+(excel_yazici._yaz_gursar_holding) kendi yazdigi, Excel formullerinde de ``İptal`` degil diye sayilan durumdur.
+
+Iki ek, belirleyici eslesme (her ikisi de TL tutarini kurusu kurusuna dogrular; tutar farkliysa ESLESMEZ):
+  * Banka masrafi yoldasi: Kaynak ``<belge>-NNN-MASRAF`` -> ana fisin 780 satiri (uygulamanin yazdigi, gomulu) YA DA
+    ``<belge>-MASRAF`` / NNN fisi (ayri masraf fisi).
+  * Kaynak anahtari tutmayan satir: ``Belge_Referans`` = fisin belge_id'si, ayni tutar ve cari, birebir (bir fis en fazla
+    bir Excel satirina eslenir; ikinci ayni satir ``eksik_defterde`` kalir).
 """
 from __future__ import annotations
 
@@ -26,6 +35,9 @@ import config
 import finans_cekirdegi as cekirdek
 
 _KAYNAK_RE = re.compile(r"^(?P<belge>.+)-(?P<sira>\d{3})$")
+_MASRAF_RE = re.compile(r"^(?P<belge>.+)-(?P<sira>\d{3})-MASRAF$")
+# Defterde karsiligi beklenen Excel durumlari (``cekirdek._norm`` ile normalize edilir)
+_BEKLENEN_DURUMLAR = {"aktif", "", "gerceklesti"}
 # Defterde Excel satiri olmayan, sistemin kendi urettigi fisler (acilis bakiyesi, ters kayit, grup ici cift taraf)
 _DEFTER_ONEKLERI = ("OPEN-", "REV-", "IC-", "TRF-", "KUR-", "FX-")
 
@@ -64,6 +76,7 @@ def _excel_satirlari() -> list[dict]:
                 "kaynak_belge": str(h("Kaynak_Belge_ID") or "").strip(),
                 "tutar": h("Tutar"), "pb": str(h("PB") or "TL").strip().upper(), "kur": h("Kur"),
                 "cari": str(h("Cari") or ""), "proje": str(h("Proje") or ""),
+                "belge_ref": str(h("Belge_Referans") or "").strip(),
             })
         return satirlar
     finally:
@@ -97,7 +110,7 @@ def _beklenen_tl_kurus(satir: dict) -> int | None:
 
 def kontrol() -> dict:
     """Mutabakat raporu. ANA Excel'i ve SQLite'i yalnizca OKUR."""
-    excel = [x for x in _excel_satirlari() if x["durum"].lower() in ("aktif", "")]
+    excel = [x for x in _excel_satirlari() if cekirdek._norm(x["durum"]) in _BEKLENEN_DURUMLAR]
     yol = Path(cekirdek.DB_PATH)
     fisler: dict[tuple[str, int], dict] = {}
     if yol.exists():
@@ -106,30 +119,58 @@ def kontrol() -> dict:
         con.execute("PRAGMA query_only=ON")
         try:
             for r in con.execute(
-                "SELECT f.belge_id, f.kayit_sira, f.durum, "
-                "(SELECT s.borc_kurus FROM fis_satirlari s WHERE s.fis_id=f.fis_id ORDER BY s.satir_no LIMIT 1) ana_borc "
+                "SELECT f.belge_id, f.kayit_sira, f.durum, f.cari, "
+                "(SELECT s.borc_kurus FROM fis_satirlari s WHERE s.fis_id=f.fis_id ORDER BY s.satir_no LIMIT 1) ana_borc, "
+                "(SELECT COALESCE(SUM(s.borc_kurus), 0) FROM fis_satirlari s "
+                "WHERE s.fis_id=f.fis_id AND s.hesap_kodu='780') masraf "
                 "FROM fisler f"
             ):
-                fisler[(r["belge_id"], r["kayit_sira"])] = {"durum": r["durum"], "tutar": r["ana_borc"]}
+                fisler[(r["belge_id"], r["kayit_sira"])] = {
+                    "durum": r["durum"], "tutar": r["ana_borc"], "cari": r["cari"], "masraf": int(r["masraf"] or 0)}
         except sqlite3.OperationalError:
             fisler = {}
         finally:
             con.close()
 
-    eksik, fark, beklenen = [], [], set()
+    eksik, fark, beklenen, ikinci_tur = [], [], set(), []
     for x in excel:
+        ozet = {"satir": x["satir"], "kayit_id": x["kayit_id"], "cari": x["cari"], "proje": x["proje"],
+                "excel_tutar": x["tutar"], "pb": x["pb"]}
+        beklenen_tutar = _beklenen_tl_kurus(x)
+
+        # Banka masrafi yoldasi (``<belge>-NNN-MASRAF``): ana fisin gomulu 780 satiri ya da ayri ``<belge>-MASRAF`` fisi
+        m = _MASRAF_RE.match(x["kaynak_belge"]) if x["kaynak_belge"] else None
+        if m:
+            ana_anahtar, kardes_anahtar = (m.group("belge"), int(m.group("sira"))), (f"{m.group('belge')}-MASRAF", int(m.group("sira")))
+            ana, kardes = fisler.get(ana_anahtar), fisler.get(kardes_anahtar)
+            if kardes and kardes["durum"] == "MUHASEBELESTI" and beklenen_tutar is not None \
+                    and kardes["tutar"] is not None and int(kardes["tutar"]) == beklenen_tutar:
+                beklenen.add(kardes_anahtar)
+            elif not (ana and ana["durum"] == "MUHASEBELESTI" and beklenen_tutar is not None and ana["masraf"] == beklenen_tutar):
+                eksik.append(ozet)
+            continue
+
         anahtar = _beklenen_anahtar(x)
         beklenen.add(anahtar)
         fis = fisler.get(anahtar)
-        ozet = {"satir": x["satir"], "kayit_id": x["kayit_id"], "cari": x["cari"], "proje": x["proje"],
-                "excel_tutar": x["tutar"], "pb": x["pb"]}
         if fis is None:
-            eksik.append(ozet)
+            ikinci_tur.append((x, ozet, beklenen_tutar))
             continue
-        beklenen_tutar = _beklenen_tl_kurus(x)
         if beklenen_tutar is not None and fis["tutar"] is not None and fis["durum"] == "MUHASEBELESTI" \
                 and int(fis["tutar"]) != beklenen_tutar:
             fark.append({**ozet, "defter_tl_kurus": int(fis["tutar"]), "excel_tl_kurus": beklenen_tutar})
+
+    # Kaynak anahtari tutmayan satirlar: Belge_Referans = fis belge_id'si + ayni TL tutari + ayni cari, birebir
+    for x, ozet, beklenen_tutar in ikinci_tur:
+        adaylar = [k for k, v in fisler.items()
+                   if x["belge_ref"] and k[0] == x["belge_ref"] and k not in beklenen and v["durum"] == "MUHASEBELESTI"
+                   and beklenen_tutar is not None and v["tutar"] is not None and int(v["tutar"]) == beklenen_tutar
+                   and cekirdek._norm(v["cari"]) == cekirdek._norm(x["cari"])]
+        if len(adaylar) == 1:
+            beklenen.add(adaylar[0])
+        else:
+            eksik.append(ozet)
+    eksik.sort(key=lambda o: o["satir"])
     fazla = sorted(
         {f"{b}-{s:03d}" for (b, s), v in fisler.items()
          if v["durum"] == "MUHASEBELESTI" and (b, s) not in beklenen and not b.startswith(_DEFTER_ONEKLERI)}
