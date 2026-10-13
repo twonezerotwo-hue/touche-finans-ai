@@ -359,6 +359,84 @@ class AtomiklikVeKorumaTestleri(DepoTestTemeli):
         self.assertTrue(dis()["basari"])
 
 
+class GeciciKilitCakismasiTestleri(DepoTestTemeli):
+    """Uygulamanin kendi eszamanli okumasi/tarama gibi KISA cakisma yazmayi reddetmez; surekli kilit yine reddedilir."""
+
+    def _kilitli_open(self, kac_kez):
+        gercek_open, sayac = open, {"n": 0}
+
+        def kilitli(yol, *a, **k):
+            if Path(yol) == self.ana and "+" in (a[0] if a else k.get("mode", "r")):
+                sayac["n"] += 1
+                if kac_kez is None or sayac["n"] <= kac_kez:
+                    raise PermissionError(13, "cakisma")
+            return gercek_open(yol, *a, **k)
+        return kilitli, sayac
+
+    def _kilitli_replace(self, kac_kez):
+        gercek, sayac = depo.os.replace, {"n": 0}
+
+        def kilitli(src, dst):
+            if Path(dst) == self.ana:
+                sayac["n"] += 1
+                if kac_kez is None or sayac["n"] <= kac_kez:
+                    raise PermissionError(13, "cakisma")
+            return gercek(src, dst)
+        return kilitli, sayac
+
+    def test_kisa_sureli_yazilabilirlik_cakismasi_yazmayi_reddetmez(self):
+        kilitli, sayac = self._kilitli_open(2)
+        with patch.object(depo, "open", create=True, side_effect=kilitli), patch.object(depo, "KILIT_BEKLEME", 0):
+            sonuc = excel_yazici.yaz("gursar_mimarlik", veri(), "G-1")
+        self.assertTrue(sonuc["basari"], sonuc)
+        self.assertEqual(sayac["n"], 3)                                  # 2 gecici cakisma + 1 basarili
+        self.assertEqual(depo.gecici_dosyalar(), [])
+
+    def test_kisa_sureli_yerlestirme_cakismasi_yazmayi_reddetmez(self):
+        kilitli, sayac = self._kilitli_replace(2)
+        once = depo.sha256(self.ana)
+        with patch.object(depo.os, "replace", side_effect=kilitli), patch.object(depo, "KILIT_BEKLEME", 0):
+            sonuc = excel_yazici.yaz("gursar_mimarlik", veri(), "G-2")
+        self.assertTrue(sonuc["basari"], sonuc)
+        self.assertEqual(sayac["n"], 3)
+        self.assertNotEqual(depo.sha256(self.ana), once)                 # yazma gercekten yapildi
+        self.assertEqual(depo.gecici_dosyalar(), [])
+
+    def test_surekli_kilit_yazilabilirlik_kontrolunde_yine_reddedilir_hicbir_sey_degismez(self):
+        excel_yazici.yaz("gursar_mimarlik", veri(), "G-0")
+        once = depo.sha256(self.ana), depo.sha256(self.yedek)
+        kilitli, sayac = self._kilitli_open(None)
+        with patch.object(depo, "open", create=True, side_effect=kilitli), patch.object(depo, "KILIT_BEKLEME", 0):
+            sonuc = excel_yazici.yaz("gursar_mimarlik", veri(), "G-3")
+        self.assertFalse(sonuc["basari"])
+        self.assertEqual(sonuc["hata_kodu"], "ANA_KILITLI")
+        self.assertEqual(sayac["n"], depo.KILIT_DENEME)                 # sinirli: sonsuza dek beklemez
+        self.assertEqual((depo.sha256(self.ana), depo.sha256(self.yedek)), once)
+        self.assertEqual(depo.gecici_dosyalar(), [])
+
+    def test_surekli_kilit_yerlestirmede_yine_reddedilir_ana_degismez(self):
+        excel_yazici.yaz("gursar_mimarlik", veri(), "G-0")
+        ana_once = depo.sha256(self.ana)
+        kilitli, sayac = self._kilitli_replace(None)
+        with patch.object(depo.os, "replace", side_effect=kilitli), patch.object(depo, "KILIT_BEKLEME", 0):
+            sonuc = excel_yazici.yaz("gursar_mimarlik", veri(), "G-4")
+        self.assertFalse(sonuc["basari"])
+        self.assertEqual(sonuc["hata_kodu"], "ANA_KILITLI")
+        self.assertEqual(sayac["n"], depo.KILIT_DENEME)
+        self.assertEqual(depo.sha256(self.ana), ana_once)
+        self.assertEqual(depo.gecici_dosyalar(), [])
+
+    def test_kilit_bekleme_sinirli_gercek_kilit_hizla_reddedilir(self):
+        import time as zaman
+
+        kilitli, _ = self._kilitli_open(None)
+        t0 = zaman.monotonic()
+        with patch.object(depo, "open", create=True, side_effect=kilitli):
+            sonuc = excel_yazici.yaz("gursar_mimarlik", veri(), "G-5")
+        self.assertEqual(sonuc["hata_kodu"], "ANA_KILITLI")
+        self.assertLess(zaman.monotonic() - t0, 5.0)                    # gercek kilit ~1 sn icinde bildirilir
+
+
 class GeriDonusTestleri(DepoTestTemeli):
     def _iki_surum(self):
         excel_yazici.yaz("gursar_mimarlik", veri(), "B-1")

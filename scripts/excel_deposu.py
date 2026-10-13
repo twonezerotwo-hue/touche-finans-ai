@@ -303,13 +303,25 @@ def _kullanici_mesaji(exc: Exception) -> str | None:
     return None
 
 
+# Windows'ta uygulamanin KENDI eszamanli okumasi (dashboard/sihirbaz istegi) ya da bir tarama yazilacak dosyayi
+# milisaniyeler boyunca acik tutabilir; bu gercek bir Excel kilidi degildir. Gercek Excel/OneDrive kilidi dakikalarca
+# surer: kisa, SINIRLI bir bekleme gecici cakismayi emer, gercek kilidi ~1 sn icinde yine reddeder (kayit yapilmaz).
+KILIT_DENEME = 6
+KILIT_BEKLEME = 0.2
+
+
 def _ana_yazilabilir_mi(ana: Path) -> None:
     """Excel dosyayi acik tutuyorsa (Windows paylasim kilidi) ya da OneDrive kilitlediyse yazma daha baslamadan reddedilir."""
-    try:
-        with open(ana, "r+b"):
-            pass
-    except PermissionError as exc:
-        raise DepoHatasi("ANA_KILITLI", _kullanici_mesaji(exc) or str(exc)) from exc
+    son = PermissionError(13, "Ana Excel kilitli")
+    for deneme in range(KILIT_DENEME):
+        try:
+            with open(ana, "r+b"):
+                return
+        except PermissionError as exc:
+            son = exc
+            if deneme < KILIT_DENEME - 1:
+                time.sleep(KILIT_BEKLEME)
+    raise DepoHatasi("ANA_KILITLI", _kullanici_mesaji(son) or str(son)) from son
 
 
 def _ana_ayni_mi(ana: Path, beklenen_hash: str) -> None:
@@ -462,13 +474,17 @@ def guvenli_degistir(degistirici, *, islem_id: str | None = None, aktor: str = "
             olay["yedek_hash"] = yedek_hash
             _ana_ayni_mi(ana, ana_hash_once)           # 5) yedekleme sirasinda disaridan degisim?
             yeni_hash = sha256(gecici)
-            try:
-                os.replace(gecici, ana)                # 6) atomik yerlestirme
-            except OSError as exc:
-                mesaj = _kullanici_mesaji(exc)
-                if mesaj:
-                    raise DepoHatasi("ANA_KILITLI", mesaj) from exc
-                raise
+            for deneme in range(KILIT_DENEME):
+                try:
+                    os.replace(gecici, ana)            # 6) atomik yerlestirme (basarisiz olursa ANA degismez)
+                    break
+                except OSError as exc:
+                    mesaj = _kullanici_mesaji(exc)
+                    if not mesaj:
+                        raise
+                    if deneme == KILIT_DENEME - 1:
+                        raise DepoHatasi("ANA_KILITLI", mesaj) from exc
+                    time.sleep(KILIT_BEKLEME)
             gecici = None
             ana_degisti = True
             if sha256(ana) != yeni_hash:               # 7) yerlestirme dogrulamasi
