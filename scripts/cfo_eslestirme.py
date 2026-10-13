@@ -201,9 +201,12 @@ def rapor(faaliyet_key, proje, kalemler=()) -> dict:
     fl = _proje_fisleri(faaliyet_key, proje)
     gruplar: dict[str, list] = {}
     for f in fl:
-        gruplar.setdefault(f["cari"], []).append(f)
-    eksi = [{"cari": c, "acik_borc_kurus": h["acik_borc"]} for c, l in gruplar.items()
-            if (h := pf.hesapla(l))["acik_borc"] < 0]
+        gruplar.setdefault(pf.etkin_cari(f), []).append(f)
+    eksi = [
+        {"cari": c, "acik_borc_kurus": h["acik_borc"]}
+        for c, liste in gruplar.items()
+        if (h := pf.hesapla(liste))["acik_borc"] < 0
+    ]
     return {"faaliyet": faaliyet_key, "proje": proje, "borclar": borclar, "yanlis_cari_odemeleri": yanlis_cari,
             "eksi_bakiyeli_cariler": sorted(eksi, key=lambda x: x["acik_borc_kurus"]),
             "acik_alacaklar": [_ozet(k) for k in acik if k.tur == ALACAK]}

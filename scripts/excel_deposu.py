@@ -429,7 +429,7 @@ def guvenli_degistir(degistirici, *, islem_id: str | None = None, aktor: str = "
                 sonuc["degisiklik_yapildi"] = False
                 return sonuc
 
-            if hasattr(wb, "calculation"):
+            if getattr(wb, "calculation", None) is not None:
                 wb.calculation.fullCalcOnLoad = True
             gecici = _gecici_yol(ana)
             wb.save(gecici)                            # 3) gecici dosyaya kaydet
