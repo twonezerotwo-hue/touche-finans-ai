@@ -104,6 +104,12 @@ class CfoHttpTestleri(CfoTestTemeli):
         self.assertFalse(d["degisiklik_yapildi"])
         self.assertEqual(hashlib.sha256(self.ana.read_bytes()).hexdigest(), once)
         self.assertEqual(ui_taslak_sayisi(), 0)
+        st, d = self.chat("Göktürk okuluna ait bütün Devrim ödemelerini yaz")
+        self.assertEqual(st, 200)
+        self.assertEqual(d["niyet"], "cfo_sorgu")
+        self.assertIn("100.000,00", d["cevap"])
+        self.assertIsNone(d.get("kayit_taslagi"))
+        self.assertEqual(ui_taslak_sayisi(), 0)
 
     def test_http_ayni_komut_ikinci_kez_engellenir(self):
         self.gecmis_odeme_yaz()

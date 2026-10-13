@@ -94,6 +94,10 @@ class SorguTestleri(CfoTestTemeli):
         y = self.sor("Göktürk okulu ödemelerini kalem kalem göster")
         self.assertIn("1. 20.09.2026 · Devrim", y["cevap"])
         self.assertIn("2. 02.10.2026 · Sebahattin Çakmak", y["cevap"])
+        y = self.sor("Göktürk okuluna ait bütün Devrim ödemelerini yaz")
+        self.assertEqual(y["niyet"], "cfo_sorgu")
+        self.assertEqual(self.tutar(y), 100_000)
+        self.assertIn("1. 20.09.2026 · Devrim", y["cevap"])
 
     def test_belirsiz_ad_tahmin_edilmez(self):
         from openpyxl import load_workbook
@@ -137,6 +141,8 @@ class SorguTestleri(CfoTestTemeli):
         from cfo_niyet import analiz_et
 
         n = analiz_et("Göktürk okulunda ne kadar ödeme yaptık?", self.katalog(), BUGUN)
+        self.assertEqual(n.tur, "SORGU")
+        n = analiz_et("Göktürk okuluna ait bütün Devrim ödemelerini yaz", self.katalog(), BUGUN)
         self.assertEqual(n.tur, "SORGU")
 
     def test_kayit_gecmisi_neden_burada(self):

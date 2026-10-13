@@ -71,6 +71,8 @@ KOMUT_FIILLERI = ("ekle", "kaydet", "yaz", "gir", "isle", "olustur", "yapildi", 
 SORGU_IPUCLARI = ("ne kadar", "kac tl", "kac lira", "kactir", "kaca", "kac ", "toplam ne", "listele", "goster",
                   "nedir", "neydi", "ne zaman", "var mi", "yok mu", "kalem kalem", "ozet", "rapor", "hangisi",
                   "hangi ", "kimler", "neden", "niye", "ne oldu", "kalmis", "kaldi", "kazandik", "kazandim")
+LISTE_SORGU_FIILLERI = ("yaz", "listele", "goster", "sirala", "dok", "cikar", "ver")
+FINANS_NESNELERI = ("odeme", "odemeler", "tahsilat", "gider", "gelir", "alacak", "borc", "kayit", "hareket")
 GELECEK_ANAHTARLARI = ("odenecek", "yapilacak", "yapilmasi", "gonderilecek", "planlan", "vade", "ileri tarih",
                        "gelecek ay", "haftaya", "yarin", "ay sonu", "ayin sonu", "taksit", "yapacagiz")
 KURALLI_ANAHTARLAR = ("cek ", " cek", "teminat", "borclan", "kredi", "emanet", "finansman", "ortak cepten",
@@ -247,6 +249,16 @@ def nakit_gerekli_mi(islem_turu) -> bool:
 def sorgu_mu(sade: str, ham: str, tutar_var: bool) -> bool:
     if "?" in ham:
         return True
+    # "Göktürk okuluna ait bütün Devrim ödemelerini yaz" gibi cümleler
+    # okuma/listedir; "yaz" kelimesi burada yeni Excel kaydı anlamına gelmez.
+    # Tutar varsa ise "10 bin TL ödeme yaz" kayıt talimatı olmaya devam eder.
+    if not tutar_var and any(n in sade for n in FINANS_NESNELERI):
+        liste_baglam = (
+            re.search(r"\b(butun|tum|tüm|tam|liste|kalem kalem|dokum|ayrinti)\b", sade)
+            or re.search(r"\b\w+(?:leri|lari|larini|lerini|ler|lar)\b", sade)
+        )
+        if liste_baglam and any(re.search(rf"\b{fiil}\w*\b", sade) for fiil in LISTE_SORGU_FIILLERI):
+            return True
     if _icerir(sade, SORGU_IPUCLARI):
         return not (tutar_var and re.search(r"\b(ekle|kaydet|yaz|isle|gir)\b", sade))
     # "yaptik mi", "edildi mi" gibi soru eki

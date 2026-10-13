@@ -93,8 +93,17 @@ def sorgu_coz(metin, katalog: Katalog, bugun: date | None = None) -> Sorgu | Non
 
     bas, bit, etiket = fd._donem_coz(metin, bugun)
     s.bas, s.bit, s.donem_etiketi = bas, bit, etiket
-    s.detay = fd._detay_istegi(metin)
+    s.detay = fd._detay_istegi(metin) or _liste_detay_istegi(sade)
     return s
+
+
+def _liste_detay_istegi(sade: str) -> bool:
+    """'Bütün Devrim ödemelerini yaz' gibi okuma komutlarında toplamla yetinme, kalemleri de göster."""
+    finans_nesnesi = re.search(r"\b(odeme|odemeler|tahsilat|gider|gelir|alacak|borc|kayit|hareket)\w*\b", sade)
+    liste_baglam = re.search(r"\b(butun|tum|tüm|tam|liste|kalem kalem|dokum|ayrinti)\b", sade)
+    liste_fiili = re.search(r"\b(yaz|listele|goster|sirala|dok|cikar|ver)\w*\b", sade)
+    cogul_nesne = re.search(r"\b\w+(?:leri|lari|larini|lerini|ler|lar)\b", sade)
+    return bool(finans_nesnesi and liste_fiili and (liste_baglam or cogul_nesne))
 
 
 def _kapsam_metni(s: Sorgu) -> str:
