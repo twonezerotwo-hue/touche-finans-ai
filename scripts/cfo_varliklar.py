@@ -60,13 +60,22 @@ class Cozum:
     kullanilan: frozenset = frozenset()          # metinde tuketilen jeton konumlari
 
 
+_YUMUSAMA = {"k": "g", "t": "d", "p": "b"}      # norm'da 'ğ' -> 'g': Çakmak -> Çakmağa, Cumhurbaşkanı gibi
+
+
 def _ek_eslesme(metin_jetonu: str, ad_jetonu: str) -> bool:
-    """'okuluna' ~ 'okulu': ad jetonu ile baslar ve fark kisa bir ektir."""
+    """'okuluna' ~ 'okulu': ad jetonu ile baslar ve fark kisa bir ektir. Unlu ekten once son k/t/p yumusar ('cakmaga')."""
     if metin_jetonu == ad_jetonu:
         return True
     if len(ad_jetonu) < 3:
         return False
-    return metin_jetonu.startswith(ad_jetonu) and len(metin_jetonu) - len(ad_jetonu) <= _MAKS_EK_UZUNLUGU
+    if metin_jetonu.startswith(ad_jetonu) and len(metin_jetonu) - len(ad_jetonu) <= _MAKS_EK_UZUNLUGU:
+        return True
+    yumusak = _YUMUSAMA.get(ad_jetonu[-1])
+    return bool(yumusak and len(ad_jetonu) >= 4 and len(metin_jetonu) > len(ad_jetonu)
+                and metin_jetonu.startswith(ad_jetonu[:-1] + yumusak)
+                and metin_jetonu[len(ad_jetonu)] in "aeiou"
+                and len(metin_jetonu) - len(ad_jetonu) <= _MAKS_EK_UZUNLUGU)
 
 
 def _alias_eslesmesi(metin_jetonlari: list[str], alias: str, yasak: frozenset = frozenset()):
@@ -89,6 +98,25 @@ def _alias_eslesmesi(metin_jetonlari: list[str], alias: str, yasak: frozenset = 
     return frozenset(konumlar)
 
 
+def _tek_hata(a: str, b: str) -> bool:
+    """Iki kelime arasinda en fazla TEK yazim hatasi var mi (harf ekleme/silme/degisme ya da yan yana iki harfin yer degisimi)."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    i = 0
+    while i < min(la, lb) and a[i] == b[i]:
+        i += 1
+    if i == min(la, lb):
+        return True                                   # biri digerinin onegi (tek harf eksik/fazla)
+    if la == lb:
+        if a[i + 1:] == b[i + 1:]:
+            return True                               # tek harf yanlis
+        return i + 1 < la and a[i] == b[i + 1] and a[i + 1] == b[i] and a[i + 2:] == b[i + 2:]   # "devirm" ~ "devrim"
+    return a[i + 1:] == b[i:] if la > lb else b[i + 1:] == a[i:]
+
+
 def _bulanik_eslesme(metin_jetonlari: list[str], alias: str, yasak: frozenset = frozenset()):
     ad_jetonlari = alias.split()
     if not ad_jetonlari:
@@ -100,6 +128,8 @@ def _bulanik_eslesme(metin_jetonlari: list[str], alias: str, yasak: frozenset = 
             if i in yasak or i in konumlar or len(mj) < 4 or len(aj) < 4:
                 continue
             oran = SequenceMatcher(None, mj, aj).ratio()
+            if len(mj) >= 5 and len(aj) >= 5 and _tek_hata(mj, aj):
+                oran = max(oran, _BULANIK_ESIK)           # tek harflik hata: oneri (kullanici onaylar)
             if oran > en_oran:
                 en_oran, en_konum = oran, i
         if en_konum is None or en_oran < _BULANIK_ESIK:
@@ -225,6 +255,9 @@ def _faaliyet_takma_adlari(key, firma, tum_firmalar):
     ilk = jetonlar(firma.get("ad"))
     if ilk and len(ilk[0]) >= 4 and ilk_jetonlar.get(ilk[0]) == [key]:
         adlar.append(ilk[0])
+    # "Holding adina ..." : adinda 'holding' gecen TEK faaliyet icin kisa ad
+    if "holding" in ilk and [k for k, f in tum_firmalar.items() if "holding" in jetonlar(f.get("ad"))] == [key]:
+        adlar.append("holding")
     return tuple(dict.fromkeys(adlar))
 
 

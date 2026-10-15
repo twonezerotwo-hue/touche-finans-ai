@@ -6,11 +6,12 @@ python -m pytest -q                      # whole suite (~40 s)
 ruff check scripts tests --select F,E9   # lint used in this repo
 python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_defter_mutabakati.py \
     scripts/cfo_niyet.py scripts/cfo_sohbet.py scripts/cfo_sorgu.py scripts/cfo_varliklar.py \
-    scripts/cfo_yonlendirici.py scripts/proje_finansi.py scripts/excel_yazici.py scripts/cfo_eslestirme.py     # clean
+    scripts/cfo_yonlendirici.py scripts/proje_finansi.py scripts/excel_yazici.py scripts/cfo_eslestirme.py \
+    scripts/cfo_dil.py                                                                                         # clean
 ```
 Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests` also works for the non-browser tests.
 
-Result at the time of writing: **301 passed, 1 skipped** (the skip needs a copy of a production DB, see below).
+Result at the time of writing: **408+ passed, 2 skipped** (a skip needs a copy of a production DB, see below).
 Baseline on the original commit: 6 modules failed at import; with that worked around, 126 passed / 21 failed.
 
 ## Production data is never touched
@@ -36,6 +37,8 @@ Baseline on the original commit: 6 modules failed at import; with that worked ar
 | `test_excel_mutabakati.py` | Excel↔ledger reconciliation is read-only, reports manual rows / amount changes / orphans, import skips app-written rows (no double count), idempotent |
 | `test_muhasebe_eslemesi.py` | payment ≠ expense, accrual, collection ≠ income, loan ≠ income, intercompany never an expense, unknown type never silently an expense |
 | `test_cfo_sohbet.py` | sentence parsing (amount/date/currency forms, name variants, "Gürsar İnşaat"="Gürsar Mimarlık"), query vs record, complex/unsupported instructions, wizard (no field re-asked, typed answer = chip click, ambiguity, cancel, ownership), approval writes one record with the original instruction in the audit, double approval, repeat guard, **no LLM call in any step** |
+| `test_cfo_dil.py` | Turkish language helpers without a workbook: written-out amounts (`yirmi beş bin`, `10 bin 500`), relative dates (`geçen cuma`, `3 gün önce`, `ayın 5'inde`), query periods (`bu hafta`, `son 30 gün`, `ilk çeyrek`, ranges), negated/needed/conditional/future mood, account hints |
+| `test_cfo_anlama.py` | everyday-Turkish understanding end to end: verb variety, direction (customer paying = collection, `fatura kestik` vs `fatura geldi`), amounts/dates/currency symbols, account hints, typos and consonant softening, sentences that must **not** open a draft (`ödeme yapmadık`, `yapmam lazım`, `gerekirse`, `istiyor`, `3 rapor verdik`), query metrics/periods/direction; wizard keeps the original sentence in the audit trail and the bank/cash hint after the activity is answered |
 | `test_cfo_sorgu.py` | project/activity/counterparty/holding questions, period handling, ambiguity never guessed, **zero mutation** (Excel hash, backup, ledger row counts, temp files), "why is this record here" |
 | `test_proje_finansi.py` | revenue/collection/expense/payment/profit/cash kept apart on fixtures, other projects don't leak, work items, counterparty balances, reversals, loans, read-only connection, Holding built from real activities with intercompany eliminated, a newly added activity works unchanged |
 | `test_cfo_http.py` | the same flows over real HTTP (wizard, password approval, queries, navigation data endpoints, RBAC scope, other users' drafts, Excel status) |

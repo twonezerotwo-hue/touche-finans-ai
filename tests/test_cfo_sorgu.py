@@ -114,6 +114,48 @@ class SorguTestleri(CfoTestTemeli):
         self.assertEqual(y["niyet"], "cfo_sorgu_netlestir")
         self.assertIn("tahmin yürütmedim", y["cevap"])
 
+    # --- gunluk dil: donem ifadeleri, yon ("bize borclu" / "alacakli"), kismi proje adi ---
+    def test_donem_ifadeleri_gercek_veriyle(self):
+        y = self.sor("Son 30 günde Göktürk okulunda ne kadar ödeme yaptık?")      # 13.09 - 12.10
+        self.assertEqual(self.tutar(y), 140_000)
+        self.assertEqual(y["sorgu"]["filtre"]["bas"], "2026-09-13")
+        y = self.sor("1 Ekim ile 10 Ekim arasında ne kadar ödeme yaptık")
+        self.assertEqual((self.tutar(y), y["sorgu"]["filtre"]["bas"], y["sorgu"]["filtre"]["bit"]),
+                         (40_000, "2026-10-01", "2026-10-10"))
+        y = self.sor("Eylülde Göktürk'e ne kadar harcadık")                       # ay adi apostrofsuz ekli
+        self.assertEqual(self.tutar(y), 100_000)
+        y = self.sor("Bugün ne kadar ödeme yaptık")
+        self.assertEqual(self.tutar(y), 0)
+        self.assertIn("kayıt bulunamadı", y["cevap"])
+
+    def test_kismi_proje_adi_kabul_edilir_kapsam_ve_not_cevapta_yazar(self):
+        y = self.sor("Göktürk'ün kârı ne durumda")
+        self.assertEqual(y["sorgu"]["filtre"]["proje"], "Göktürk Okulu")
+        self.assertEqual(self.tutar(y), 200_000)                                   # 500.000 gelir - 300.000 gider
+        self.assertIn("Not: Sorudaki ad Göktürk Okulu olarak anlaşıldı", y["cevap"])
+
+    def test_karsi_taraf_bize_borcluysa_kalan_alacaktir(self):
+        y = self.sor("İşveren bize ne kadar borçlu")
+        self.assertEqual(y["sorgu"]["metrik"], "KALAN_ALACAK")
+        self.assertEqual((y["sorgu"]["filtre"]["cari"], self.tutar(y)), ("İşveren", 300_000))   # 500.000 - 200.000
+
+    def test_alacakli_ise_biz_borcluyuz_acik_borctur(self):
+        y = self.sor("Devrim ne kadar alacaklı")
+        self.assertEqual((y["sorgu"]["metrik"], y["sorgu"]["filtre"]["cari"]), ("ACIK_BORC", "Devrim"))
+        y2 = self.sor("Devrim'e borcumuz var mı")
+        self.assertEqual(self.tutar(y2), self.tutar(y))
+
+    def test_isveren_ne_kadar_odedi_tahsilattir_iade_ise_odemedir(self):
+        y = self.sor("İşveren ne kadar ödedi")
+        self.assertEqual((y["sorgu"]["metrik"], self.tutar(y)), ("TAHSIL", 200_000))      # T1: 200.000 tahsilat
+        self.assertIn("tahsilat olarak anlaşıldı", y["cevap"])
+        y = self.sor("İşverene ne kadar ödedik")                                            # yonelme eki: bizim odememiz
+        self.assertEqual((y["sorgu"]["metrik"], self.tutar(y)), ("ODENEN", 0))
+
+    def test_gelir_ve_ciro_kazanilan_gelirdir(self):
+        self.assertEqual(self.tutar(self.sor("Gelirimiz ne kadar")), 500_000)
+        self.assertEqual(self.tutar(self.sor("gokturk okulunun cirosu ne")), 500_000)
+
     def test_desteklenmeyen_soru_none_doner_danismana_devredilir(self):
         self.assertIsNone(cfo_sorgu.cevapla("Bugün hava nasıl?", self.katalog(), BUGUN))
 

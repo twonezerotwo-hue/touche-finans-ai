@@ -39,6 +39,30 @@ counterparty are never guessed from history. Everything can be changed with `Dü
 `yeni ödeme`, `yeni gider`, `kayıt ekle` (empty start, everything asked) · amounts `10 bin`, `10k`, `10.000`, `10.000TL`,
 `12.500,50 TL`, `1,5 milyon TL` · dates `05.10.2026`, `dün`, `5 Ekim`, invalid `31.02.2026` is reported, not guessed.
 
+### Everyday Turkish (`cfo_dil.py`, deterministic — no model call)
+Understood in addition to the sentences above (all in `tests/test_cfo_anlama.py`, `tests/test_cfo_dil.py`):
+* **Verbs** — `ödedik/verdim/gönderdim/yatırdım/havale yaptık/elden verdik/avans verdik`, `… ödendi/verildi/ödenmiş`.
+  Generic verbs (`verdik`, `gönderdik`, `yatırdık`) count as a payment only with a *strong* amount (TL/bin/thousand separator):
+  `Müdüre 3 rapor verdik` is not a payment.
+* **Direction** — a customer/işveren *paying* is a collection: `İşveren 100 bin ödedi`, `İşverenden 100 bin aldık`, `hesabımıza yatırdı`,
+  `EFT geldi`; money going *to* the customer (`İşverene iade ödedik`) stays a payment. `fatura kestik/düzenledik`, `hakediş çıkardık` =
+  revenue accrual; `fatura geldi`, `malzeme aldık`, `harcadık` = expense; `Devrim'in hakedişinden 10 bin ödendi` = payment;
+  `alacağını sildik` = receivable adjustment. Inferences are printed as notes in the draft.
+* **Amounts** — written out (`yirmi beş bin`, `yarım milyon`, `bir buçuk milyon`), split (`10 bin 500`, `3 milyon 250 bin`), symbols (`$500`, `€750`, `₺10.000`).
+  The original sentence (not the converted one) is what the audit trail stores.
+* **Dates** — `geçen cuma`, `3 gün önce`, `1 hafta önce`, `salı günü`, `geçen hafta salı`, `ayın 5'inde`, `geçen ay 15'inde`, `12.10 tarihinde`, `dünkü`, `bu sabah`
+  (past-oriented; an impossible day such as 31 in a 30-day month is reported, not guessed).
+* **Account hints** — `kasadan/elden/nakit` → the cash account, `bankadan/havale/EFT` → the bank account, chosen only when exactly one fits
+  (the hint is kept if the activity is answered later). Shown in the draft; never overrides an explicit account.
+* **Names** — Turkish consonant softening (`Çakmak` → `Çakmağa`), a swapped letter (`Devirm` → suggests `Devrim`), `Holding adına …`.
+  A fragment-with-amount sentence such as `Devrim 10 bin` or `Göktürk Okulu 10 bin` opens the wizard and asks the type.
+
+### Never recorded (the sentence does not describe something that happened)
+Negated (`ödeme yapmadık`, `yapılmadı`, `ödenmedi`, `ödeyemedik`, `ödemeyeceğiz`, `yapılmamış`), needed/wished (`yapmam lazım`, `gerekiyor`,
+`yapabiliriz`, `ödeyelim`, `unuttum`, `istiyor`, `talep etti`, `bekliyor`, `planlandı`), conditional (`gerekirse`, `ödersek`) and future
+(`ödeyeceğiz`, `yapılacak`) sentences never open a draft; they go to the existing advisor. A polite command (`… ekler misin?` with an amount) is
+still a command, not a question.
+
 ### Safeguards
 * Ambiguous names (two "Devrim", two "Göktürk" projects) → options, never a silent pick; typos are suggestions only.
 * A person who is not in the workbook is **not** added silently; creating one needs an explicit choice and approval.
@@ -65,6 +89,18 @@ Examples (all tested): `Göktürk okulunda ne kadar ödeme yaptık?` · `Göktü
 `Göktürk okulunda ne kadar alacağımız kaldı?` · `Gürsar'ın toplam gideri ne?` · `Devrim'e toplam ne kadar ödeme yapıldı?` ·
 `Bu ay Holding toplam ne kadar ödeme yaptı?` · `Göktürk okulunun kârı ne kadar?`
 
+**Everyday phrasing** (`tests/test_cfo_anlama.py`, `tests/test_cfo_sorgu.py`):
+* *Question forms*: no `?` needed — `ne durumda`, `nasıl`, question particles (`var mı`, `ediyor muyuz`), a trailing `… ne`, `toplam …`,
+  and amount-less plural nouns (`Devrim'in ödemeleri`, `tüm tahsilatlar`) are read requests (plural nouns also list the items).
+* *Periods*: `bugün`, `dün`, `bu/geçen hafta`, `bu/geçen ay`, month names (also `Ekimde`, `Eylül'de`), `bu/geçen yıl`, `2025 yılında`,
+  `son 30 günde`, `son 3 ayda`, `son bir yılda`, `ilk çeyrek`/`2. çeyrek`/`Q3`/`bu çeyrek`, `ilk 6 ay`, `yıl/ay başından beri`,
+  ranges (`1 Ekim ile 10 Ekim arasında`, `1-10 Ekim`, `01.10.2026 - 10.10.2026`). The period is printed in the answer.
+* *Metrics*: `gelir`/`ciro` = kazanılan gelir, `gelir gider farkı` = kâr/zarar, `harcadık` = ödeme (answer also shows gider).
+* *Direction*: `İşveren bize ne kadar borçlu` = kalan alacak, `Devrim ne kadar alacaklı` = açık borç (we owe him),
+  `İşveren ne kadar ödedi` = tahsilat (the customer's payment); `İşverene ne kadar ödedik` (to him) stays a payment.
+* *Names*: a distinctive fragment of a project/activity (`Göktürk`) is accepted and the answer says so (`Not: …`). A **person/counterparty**
+  fragment or typo is never silently chosen — the answer asks, with the single candidate named.
+
 ## 3. Pages and data endpoints (read-only, scope-checked)
 
 | UI | Endpoint | Content |
@@ -79,7 +115,11 @@ the sum of **approved** work items only (drafts excluded).
 
 ## 4. Not supported / known limits
 * Transfers, corrections and reversals from chat (explained, with the right screen).
-* Splitting one payment across several work items or counterparties in one sentence.
+* Splitting one payment across several work items or counterparties in one sentence, or several records in one sentence
+  (`Devrim'e 10 bin, Sebahattin'e 5 bin ödedik` is handed to the legacy path).
+* Questions that need a new metric: rankings (`en çok kime ödeme yaptık`), account balances (`kasada ne var`), per-counterparty lists
+  of open items. They fall through to the existing advisor.
+* "Refund from a supplier" (`Devrim'den 2 bin TL geri aldık`) and other phrasings whose direction depends on context the sentence does not give.
 * Natural-language document classification beyond the existing upload pipeline (unchanged).
 * Metrics for Excel rows typed by hand appear only after `excel_operasyon.py defteri-aktar` (the Holding page warns).
 * Currency defaults to TL when neither the sentence nor the chosen account says otherwise (always visible in the draft).

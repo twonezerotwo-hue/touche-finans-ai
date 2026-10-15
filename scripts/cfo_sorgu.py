@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+import cfo_dil
 import cfo_niyet as N
 import proje_finansi as pf
 from cfo_varliklar import Katalog, Varlik, katalog_yukle, norm
@@ -44,6 +45,7 @@ class Sorgu:
     belirsiz: dict = field(default_factory=dict)
     detay: bool = False
     kayit_kimligi: str = ""
+    notlar: list = field(default_factory=list)       # kapsam/anlama varsayimlari: cevapta aynen gosterilir
 
 
 _KIMLIK_RE = re.compile(r"\b((?:ai-th|ai-gur)-[a-z0-9]+|[a-z]{4}-chat-[a-z0-9]+)\b")
@@ -54,9 +56,16 @@ def metrik_cikar(sade: str, ham: str = ""):
         return "KAYIT_GECMISI"
     if re.search(r"\bkazan\w*|\bkazanc\b", sade):
         return "KAZANC"
-    if re.search(r"\balacag\w*|\balacak\w*", sade) and re.search(r"kal\w*|ne kadar|kac", sade):
+    # "Isveren bize ne kadar borclu": KARSI TARAFIN borcu = bizim alacagimiz. "borcumuz/borcluyuz" = bizim borcumuz.
+    if re.search(r"\bbize\s+(?:\w+\s+){0,3}borc\w*", sade) or (
+            re.search(r"\bborclu\b", sade) and not re.search(r"\bborclu\s+(?:muyuz|miyiz)\b|\bborcluyuz\b", sade)):
         return "KALAN_ALACAK"
-    if re.search(r"\bborc\w*", sade) and re.search(r"kal\w*|ne kadar|kac|acik|toplam", sade):
+    if re.search(r"\balacakli\b", sade):             # "Devrim ne kadar alacakli": O alacakli, yani biz borcluyuz
+        return "ACIK_BORC"
+    # Buraya yalniz SORGU cumleleri gelir ("alacaklarimiz ne durumda", "borcumuz var mi"): ek kosul gerekmez.
+    if re.search(r"\balacag\w*|\balacak\w*", sade):
+        return "KALAN_ALACAK"
+    if re.search(r"\bborc\w*", sade):
         return "ACIK_BORC"
     if re.search(r"\btahsil\w*", sade):
         return "TAHSIL"
@@ -64,9 +73,11 @@ def metrik_cikar(sade: str, ham: str = ""):
         return "KAR"
     if re.search(r"\bnet nakit\b|\bnakit sonuc\w*", sade):
         return "NET_NAKIT"
+    if re.search(r"\bgelir\w*|\bciro\w*", sade):      # "gelirimiz", "ciro"; "gelir gider farki" = kar/zarar
+        return "KAR" if re.search(r"\bgider\w*|\bmasraf\w*", sade) else "KAZANC"
     if re.search(r"\bgider\w*|\bmasraf\w*|\bmaliyet\w*", sade) and not re.search(r"\bodeme\w*|\bodedi\w*|\bodend\w*", sade):
         return "GIDER"
-    if re.search(r"\bodeme\w*|\bodedi\w*|\bodend\w*|\bodeyec\w*|\bodeyis\w*|\bode\b", sade) or "yaptik" in sade:
+    if re.search(r"\bodeme\w*|\bodedi\w*|\boden\w*|\bodeyec\w*|\bodeyis\w*|\bode\b|\bharca\w*", sade) or "yaptik" in sade:
         return "ODENEN"
     return None
 
@@ -86,14 +97,30 @@ def sorgu_coz(metin, katalog: Katalog, bugun: date | None = None) -> Sorgu | Non
     # varliklar (kayit cumlesiyle ayni cozumleme; zorla=True: sorguda da varlik cikar)
     n = N.analiz_et(metin, katalog, bugun, zorla=True)
     s.faaliyet, s.proje, s.cari = n.faaliyet, n.proje, n.cari
+    # Sorgu SALT-OKUNUR ve kapsam cevapta yazar: tek adayli kismi ad ("Goktürk") faaliyet/proje icin kabul edilir,
+    # varsayim ayrica belirtilir. KISI/CARI adi asla sessizce secilmez ("Devrim" -> "Devrim Yildiz" baska kisi olabilir);
+    # birden cok aday varsa da tahmin yurutulmez (asagida netlestirme istenir).
+    for alan in ("faaliyet", "proje"):
+        adaylar = n.oneri.get(alan)
+        if adaylar and len(adaylar) == 1 and alan not in n.belirsiz and getattr(s, alan) is None:
+            setattr(s, alan, adaylar[0])
+            n.oneri.pop(alan)
+            s.notlar.append(f"Sorudaki ad {adaylar[0].gorunen()} olarak anlaşıldı (tam eşleşme yoktu); yanlışsa tam adı yazın.")
     if s.faaliyet and s.faaliyet.kimlik == "touche_holding":
         s.faaliyet = None           # "Holding" = konsolide gorunum (alt faaliyetler dahil)
     s.belirsiz = {**n.belirsiz, **n.oneri}
+    # Yon: "Isveren ne kadar odedi" = musterinin odemesi = bizim TAHSILATIMIZ. "Isverene ne kadar odedik" (yonelme eki) iadedir.
+    if (s.metrik == "ODENEN" and s.cari and any(k in norm(s.cari.ekle("cari_tipi")) for k in ("musteri", "isveren"))
+            and not N.yonelme_eki_var(str(metin), s.cari.ad)):
+        s.metrik = "TAHSIL"
+        s.notlar.append(f"{s.cari.ad} müşteri/işveren olduğu için sorudaki ödeme, tahsilat olarak anlaşıldı.")
     import finans_danismani as fd
 
-    bas, bit, etiket = fd._donem_coz(metin, bugun)
+    donem = cfo_dil.donem_cozumle(metin, bugun)         # "bu hafta", "son 30 gun", "ilk ceyrek", "1-10 Ekim" ...
+    bas, bit, etiket = donem if donem else fd._donem_coz(metin, bugun)
     s.bas, s.bit, s.donem_etiketi = bas, bit, etiket
-    s.detay = fd._detay_istegi(metin) or _liste_detay_istegi(sade)
+    s.detay = (fd._detay_istegi(metin) or _liste_detay_istegi(sade)
+               or bool(N.COGUL_FINANS_RE.search(sade) and not re.search(r"\bne kadar\b|\bkac\b|\btoplam\b", sade)))
     return s
 
 
@@ -249,12 +276,20 @@ def cevapla(metin, katalog: Katalog | None = None, bugun: date | None = None, ak
         yanit_metni, sonuc = gecmis_acikla(g), g
     else:
         if s.belirsiz:
-            secenekler = ", ".join(sorted({v.gorunen() for lst in s.belirsiz.values() for v in lst})[:6])
-            return {"cevap": f"Sorudaki ad birden fazla kayıtla eşleşiyor ({secenekler}). Hangisini kastettiğinizi belirtin; tahmin yürütmedim.",
+            adaylar = sorted({v.gorunen() for lst in s.belirsiz.values() for v in lst})
+            secenekler = ", ".join(adaylar[:6])
+            if len(adaylar) == 1:
+                metin = (f"Sorudaki adla yalnızca şu kayıt eşleşebiliyor: {secenekler}. Bunu mu kastettiniz? "
+                         "Tam adıyla yazarsanız cevaplarım; tahmin yürütmedim.")
+            else:
+                metin = f"Sorudaki ad birden fazla kayıtla eşleşiyor ({secenekler}). Hangisini kastettiğinizi belirtin; tahmin yürütmedim."
+            return {"cevap": metin,
                     "niyet": "cfo_sorgu_netlestir", "llm": "deterministik", "guven": "Yüksek", "kanitlar": [],
                     "aksiyonlar": [], "degisiklik_yapildi": False}
         sonuc = calistir(s)
         yanit_metni = acikla(sonuc, s.detay)
+        if s.notlar:
+            yanit_metni += "\n" + "\n".join(f"Not: {x}" for x in s.notlar)
     audit_yaz("cfo_sorgu", aktor=str(aktor), metrik=s.metrik, kapsam=s.faaliyet.kimlik if s.faaliyet else None,
               soru_hash=hashlib.sha256(metin.encode("utf-8")).hexdigest())
     kanitlar = []

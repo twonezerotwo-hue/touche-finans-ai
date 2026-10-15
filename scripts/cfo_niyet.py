@@ -13,7 +13,10 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 
-from cfo_varliklar import BELIRSIZ, ONERI, TEKIL, YOK, Cozum, Katalog, Varlik, _ek_eslesme, coz, kismi_adaylar, kismi_coz, norm
+import cfo_dil
+from cfo_dil import AYLAR, BIRIM_KELIMELER
+from cfo_varliklar import (BELIRSIZ, ONERI, TEKIL, YOK, Cozum, Katalog, Varlik, _ek_eslesme, coz, jetonlar, kismi_adaylar,
+                           kismi_coz, norm)
 from dogrulayici import _tutar_cevir
 
 # --- Islem tipleri (kullanici dili -> iç tip) ---
@@ -71,17 +74,26 @@ KOMUT_FIILLERI = ("ekle", "kaydet", "yaz", "gir", "isle", "olustur", "yapildi", 
 SORGU_IPUCLARI = ("ne kadar", "kac tl", "kac lira", "kactir", "kaca", "kac ", "toplam ne", "listele", "goster",
                   "nedir", "neydi", "ne zaman", "var mi", "yok mu", "kalem kalem", "ozet", "rapor", "hangisi",
                   "hangi ", "kimler", "neden", "niye", "ne oldu", "kalmis", "kaldi", "kazandik", "kazandim")
+# Kelime sinirli ipuclari ("durumunda" = "-ması halinde" bir kural ifadesidir, sorgu degil)
+_SORGU_IPUCU_RE = re.compile(r"\b(?:ne durumda|durumu|durumlari|nasil)\b")
+# Soru eki: "yaptik mi", "ediyor muyuz", "borcumuz var mi", "odesek olur mu"
+_SORU_EKI_RE = re.compile(r"\bm[iu](?:yiz|yim|yuz|yum|sin|sun|siniz|sunuz|dir|dur)?\b")
+# "Excel'e ekler misin", "kaydeder misiniz": nazik KOMUT, soru degil
+_NAZIK_KOMUT_RE = re.compile(r"\b(?:ekle|kaydet|yaz|gir|isle|olustur)\w*\s+m[iu]\w*\b")
+# Tutarsiz cogul/toplam finans ismi ("Devrim'in odemeleri", "tum tahsilatlar"): okuma/liste istegi
+COGUL_FINANS_RE = re.compile(
+    r"\b(?:odeme|tahsilat|gider|gelir|alacak|borc|masraf|hakedis|fatura|hareket|kayit)(?:ler|lar)\w*\b")
+_KAYIT_KOMUTU_RE = re.compile(r"\b(?:ekle|kaydet|isle|gir|olustur|yaz)\w*")
 LISTE_SORGU_FIILLERI = ("yaz", "listele", "goster", "sirala", "dok", "cikar", "ver")
 FINANS_NESNELERI = ("odeme", "odemeler", "tahsilat", "gider", "gelir", "alacak", "borc", "kayit", "hareket")
 GELECEK_ANAHTARLARI = ("odenecek", "yapilacak", "yapilmasi", "gonderilecek", "planlan", "vade", "ileri tarih",
                        "gelecek ay", "haftaya", "yarin", "ay sonu", "ayin sonu", "taksit", "yapacagiz")
-KURALLI_ANAHTARLAR = ("cek ", " cek", "teminat", "borclan", "kredi", "emanet", "finansman", "ortak cepten",
+KURALLI_ANAHTARLAR = ("cek ", " cek", "teminat", "borclan", "kredi kullan", "kredi al", "kredi cek", "emanet", "finansman", "ortak cepten",
                       "karsiligi", "rezerv", "ihtimal", "eger ", "durumunda", "senet", "faiz")
-AYLAR = {"ocak": 1, "subat": 2, "mart": 3, "nisan": 4, "mayis": 5, "haziran": 6, "temmuz": 7,
-         "agustos": 8, "eylul": 9, "ekim": 10, "kasim": 11, "aralik": 12}
-
 _HARF = "a-zA-ZçğıöşüÇĞİÖŞÜ"
+# Para birimi sayidan once ($500, €750, ₺10.000, USD 500) ya da sonra (500 dolar, 10 bin TL) yazilabilir
 _PARA_RE = re.compile(
+    rf"(?:(?P<pb0>₺|\$|€)\s*|(?<![{_HARF}\d])(?P<pb1>usd|eur|usdt)\s+)?"
     r"(?P<sayi>\d{1,3}(?:[.\s]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)"
     rf"(?:\s*(?P<carpan>bin|milyon|milyar|k)(?![{_HARF}]))?"
     rf"(?:\s*(?P<pb>tl|try|₺|lira|usd|\$|dolar|eur|€|euro|usdt)(?![{_HARF}]))?",
@@ -94,7 +106,6 @@ _TARIH_RE = [
 _AY_TARIH_RE = re.compile(r"\b(\d{1,2})\s+(" + "|".join(AYLAR) + r")(?:\s+(20\d{2}))?\b")
 PB_KOD = {"tl": "TL", "try": "TL", "₺": "TL", "lira": "TL", "usd": "USD", "$": "USD", "dolar": "USD",
           "eur": "EUR", "€": "EUR", "euro": "EUR", "usdt": "USDT"}
-BIRIM_KELIMELER = ("gun", "ay", "adet", "kez", "saat", "kayit", "hafta", "yil", "kisi", "tane", "metre", "m2")
 
 
 @dataclass
@@ -121,6 +132,8 @@ class Niyet:
     karmasik_nedeni: str = ""
     desteklenmeyen: str = ""                         # TRANSFER/CORRECTION/REVERSAL aciklamasi
     coklu_tutar: bool = False
+    reddedilen: str = ""                             # kayit sayilmayan kip: olumsuz ("yapmadik") / gereklilik ("yapmam lazim")
+    hesap_ipucu: str = ""                            # KASA ("kasadan", "elden") | BANKA ("bankadan", "havale"); faaliyet sonradan belli olursa kullanilir
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +145,7 @@ def tarih_cikar(metin, bugun: date | None = None):
     bugun = bugun or date.today()
     ham = str(metin or "")
     sade = norm(ham)
-    for ifade, fark in (("evvelsi gun", 2), ("onceki gun", 2), ("dun", 1), ("bugun", 0)):
+    for ifade, fark in (("evvelsi gun", 2), ("onceki gun", 2), ("dun", 1), ("dunku", 1), ("bugun", 0), ("bugunku", 0)):
         if re.search(rf"\b{ifade}\b", sade):
             return bugun - timedelta(days=fark), None, ""
     kucuk = ham.casefold().replace("ı", "i")
@@ -160,7 +173,8 @@ def tarih_cikar(metin, bugun: date | None = None):
             except ValueError:
                 return None, None, f"Geçersiz tarih: {m.group(0)}"
         return sonuc, None, ""
-    return None, None, ""
+    # "gecen cuma", "3 gun once", "ayin 5'inde", "gecen ay 15'inde", "12.10 tarihinde", "dunku"
+    return cfo_dil.gorece_tarih(ham, bugun)
 
 
 def _tarih_aralik_temizle(metin):
@@ -168,17 +182,22 @@ def _tarih_aralik_temizle(metin):
     sonuc = str(metin or "")
     for kalip, _ in _TARIH_RE:
         sonuc = kalip.sub(" ", sonuc)
-    return re.sub(r"\b\d{1,2}\s+(?:%s)(?:\s+20\d{2})?\b" % "|".join(
+    sonuc = re.sub(r"\b\d{1,2}\s+(?:%s)(?:\s+20\d{2})?\b" % "|".join(
         ["ocak", "şubat", "subat", "mart", "nisan", "mayıs", "mayis", "haziran", "temmuz", "ağustos", "agustos",
          "eylül", "eylul", "ekim", "kasım", "kasim", "aralık", "aralik"]), " ", sonuc, flags=re.IGNORECASE)
+    return cfo_dil.tarih_ifadelerini_sil(sonuc)
 
 
 def tutar_cikar(metin):
-    """Metindeki para ifadelerini dondurur: [{'tutar': Decimal, 'pb': 'TL'|None, 'guclu': bool}]."""
-    temiz = _tarih_aralik_temizle(metin)
+    """Metindeki para ifadelerini dondurur: [{'tutar': Decimal, 'pb': 'TL'|None, 'guclu': bool}].
+
+    Yaziyla yazilmis ("yirmi bes bin"), parcali ("10 bin 500") ve sembollu ("$500", "₺10.000") tutarlari da anlar.
+    """
+    temiz = _tarih_aralik_temizle(cfo_dil.sayilari_cevir(metin))
     bulunanlar = []
     for m in _PARA_RE.finditer(temiz):
-        ham_sayi, carpan, pb = m.group("sayi"), m.group("carpan"), m.group("pb")
+        ham_sayi, carpan = m.group("sayi"), m.group("carpan")
+        pb = m.group("pb") or m.group("pb0") or m.group("pb1")
         sonrasi = norm(temiz[m.end():m.end() + 14]).split()
         if not (pb or carpan) and ("%" in temiz[m.end():m.end() + 2] or (sonrasi and sonrasi[0] in BIRIM_KELIMELER)):
             continue
@@ -200,30 +219,97 @@ def _icerir(sade, anahtarlar):
     return any(a in sade for a in anahtarlar)
 
 
-def islem_cikar(sade: str):
-    """Normalize metinden islem tipini cikarir (belirsizse None)."""
+# Para CIKISI fiilleri (yon: bizden karsi tarafa): acik odeme sozcukleri her zaman; "verdik/gonderdim/yatirdik" gibi
+# GENEL fiiller ancak guclu bir tutar (para birimi, bin/milyon, binlik ayrac) varsa odeme sayilir ("3 rapor verdik" degil).
+_ODEME_FIILI_RE = re.compile(
+    r"\b(?:odeme|odendi|odedik|odedim|odedi|odenmis|odenmistir|yatirildi|gonderildi|havale|eft)\w*"
+    r"|\b(?:ver|gonder|yatir|aktar|yolla)(?:ildi|ilmis|ilmistir)\b"
+    r"|\byollan\w*")
+_GENEL_VERME_RE = re.compile(r"\b(?:ver|gonder|yatir|aktar|yolla)(?:di|dik|dim|diler|mis|iyoruz|iyorum)\b")
+
+
+def _odeme_fiili(sade: str, guclu_tutar: bool) -> bool:
+    return bool(_ODEME_FIILI_RE.search(sade) or (guclu_tutar and _GENEL_VERME_RE.search(sade)))
+# Para GIRISI: "tahsilat geldi", "hesaba gecti", "EFT geldi", "bize 50 bin gonderdi", "hesabimiza yatirdi"
+_PARA_GIRISI_RE = re.compile(
+    r"\b(?:para|odeme|eft|havale|tahsilat)\s+(?:geldi|gelmis|girdi|yatti|gecti|ulasti)\b"
+    r"|\bhesab\w*\s+(?:\w+\s+){0,2}(?:gecti|girdi|yatti|geldi)\b"
+    r"|\b(?:bize|hesabimiza|hesabima)\s+(?:\w+\s+){0,3}(?:yatir|gonder|ode|at|yolla|ver)\w*")
+_ALDIK_RE = re.compile(r"\b(?:aldik|aldim|aldi|alindi|alinmis)\b")
+_KAYNAKTAN_RE = re.compile(r"\b\w{3,}(?:den|dan|ten|tan)\b")           # "isverenden", "okulundan", "Market'ten"
+# "Ofis Market'ten malzeme aldik" gibi satin alma: para girisi degil, gider
+_MAL_HIZMET = ("malzeme", "mazot", "yakit", "benzin", "motorin", "kira", "demir", "beton", "cimento", "boya", "ekipman",
+               "makine", "hizmet", "nakliye", "navlun", "tugla", "kirtasiye", "yemek", "urun", "mal ")
+_GIDER_KELIMELERI = ("gider", "masraf", "harcama", "harcad", "harcan", "fatura", "maliyet")
+_SATIS_FATURASI_RE = re.compile(
+    r"\b(?:fatura\w*|hakedis\w*)\s+(?:\w+\s+){0,2}(?:kes(?:tik|tim)|duzenle(?:dik|dim)|cikar(?:dik|dim)|hazirla(?:dik|dim))\b"
+    r"|\b(?:kes(?:tik|tim)|duzenle(?:dik|dim)|cikar(?:dik|dim)|hazirla(?:dik|dim))\s+(?:\w+\s+){0,2}(?:fatura|hakedis)\w*")
+_HAKEDIS_OLUSTUR_RE = re.compile(
+    r"\bhakedis\w*\s+(?:\w+\s+){0,2}(?:yaz|cikar|kes|duzenle|hazirla|onay|gir|isle|ekle|kaydet)\w*"
+    r"|\b(?:yaz|cikar|kes|duzenle|hazirla)\w*\s+hakedis")
+# "borcumuzu sil" bizim borcumuz olurdu; alacak silme: karsi tarafin borcu ("borcunu sildik") veya alacagimiz
+_ALACAK_SILME_RE = re.compile(
+    r"\b(?:alacag\w*|alacak\w*|borc(?:u|unu|undan|una))\s+(?:\w+\s+){0,3}(?:sil|mahsup)\w*|\balacak\s+duzelt")
+
+
+def _aldik_tahsilati(sade: str) -> bool:
+    """'Isverenden 100 bin aldik': kaynak (-den/-dan) belli, mal/hizmet yok -> para girisi (varsayim; varlik cozulunce denetlenir)."""
+    return bool(_ALDIK_RE.search(sade) and _KAYNAKTAN_RE.search(sade) and not _icerir(f" {sade} ", _MAL_HIZMET))
+
+
+def islem_cikar(sade: str, guclu_tutar: bool = False):
+    """Normalize metinden islem tipini cikarir (belirsizse None).
+
+    Yon (para cikisi/girisi) fiilden ve baglamdan cikarilir; musteri/tedarikci ayrimi varlik cozulunce
+    ``analiz_et`` icinde ikinci kez denetlenir. ``guclu_tutar``: metinde para birimi/bin/binlik ayracli bir tutar var.
+    """
     if _icerir(sade, ("grup ici", "sirketler arasi", "intercompany", "virman")):
         return TRANSFER
     if _icerir(sade, ("ters kayit", "kaydi sil", "kaydi iptal", "geri al", "iptal et")):
         return REVERSAL
     if _icerir(sade, ("duzeltme kaydi", "kaydi duzelt", "yanlis kayit")):
         return CORRECTION
-    if _icerir(sade, ("alacak sil", "alacagi sil", "alacagin sil", "alacak mahsup", "alacak duzelt")):
+    if _ALACAK_SILME_RE.search(sade):
         return RECEIVABLE_ADJUSTMENT
+    if _SATIS_FATURASI_RE.search(sade):
+        return RECEIVABLE
     if _icerir(sade, ("tahsilat", "tahsil et", "tahsil edil", "odeme aldik", "odeme aldim", "odeme geldi",
-                      "para geldi", "hesabimiza gecti", "hesaba gecti")):
+                      "para geldi", "hesabimiza gecti", "hesaba gecti")) or re.search(r"\btahsil\w*", sade) \
+            or _PARA_GIRISI_RE.search(sade):
         return COLLECTION
+    if "hakedis" in sade and _odeme_fiili(sade, guclu_tutar) and not _HAKEDIS_OLUSTUR_RE.search(sade):
+        return PAYMENT                    # "Devrim'in hakedisinden 10 bin odendi": hakedis KAYNAK, islem odeme
     if _icerir(sade, ("hakedis", "gelir tahakkuk", "alacak yaz", "alacak kayd", "alacak ekle")):
         return RECEIVABLE
-    if re.search(r"\b(odeme|odendi|odedik|odedim|odenmis|odenmistir|odeme yap|yatirildi|gonderildi|havale)\w*", sade):
+    if _aldik_tahsilati(sade):
+        return COLLECTION
+    if _odeme_fiili(sade, guclu_tutar):
         return PAYMENT
-    if _icerir(sade, ("gider", "masraf", "harcama", "fatura", "maliyet")):
+    if _icerir(sade, _GIDER_KELIMELERI):
         return EXPENSE
+    if _ALDIK_RE.search(sade) and _icerir(f" {sade} ", _MAL_HIZMET):
+        return EXPENSE                    # "12 bin TL malzeme aldik": satin alma = maliyet tahakkuku
     if re.search(r"\bborc\b", sade):
         return PAYABLE
     if re.search(r"\bgelir\b|\bkazanc\b", sade):
         return INCOME
     return None
+
+
+def yonelme_eki_var(ham: str, ad: str) -> bool:
+    """Ad, yonelme ekiyle mi gecti ('Devrim'e', 'Isverene')? -> odemeyi O ALIYOR."""
+    adlar = norm(ad).split()
+    jt = jetonlar(ham)
+    if not adlar:
+        return False
+    son = adlar[-1]
+    for i, j in enumerate(jt):
+        if j.startswith(son) and len(j) - len(son) <= 3:
+            # "Devrim'e" -> ['devrim', 'e'] (apostrof ayirir) ya da 'devrime'. 'ne'/'na' EK sayilmaz: "ne kadar" sorusu karisir.
+            ek = j[len(son):] or (jt[i + 1] if i + 1 < len(jt) else "")
+            if ek in ("e", "a", "ye", "ya"):
+                return True
+    return False
 
 
 def islem_turu_bul(islem_tipi, islem_turleri, ortak=False):
@@ -247,7 +333,15 @@ def nakit_gerekli_mi(islem_turu) -> bool:
 # ---------------------------------------------------------------------------
 
 def sorgu_mu(sade: str, ham: str, tutar_var: bool) -> bool:
+    # "10 bin TL odeme ekler misin?": soru kalibinda yazilmis KOMUT; tutar varsa kayit talimatidir
+    if tutar_var and _NAZIK_KOMUT_RE.search(sade):
+        return False
     if "?" in ham:
+        return True
+    if _SORU_EKI_RE.search(sade) or _SORGU_IPUCU_RE.search(sade):
+        return True
+    # Tutarsiz "toplam ..." / "... ne" (cumle sonunda 'ne': "gelir gider farkimiz ne", "cirosu ne") = okuma istegi
+    if not tutar_var and (re.search(r"\btoplam\w*\b", sade) or re.search(r"\bne\s*$", sade)):
         return True
     # "Göktürk okuluna ait bütün Devrim ödemelerini yaz" gibi cümleler
     # okuma/listedir; "yaz" kelimesi burada yeni Excel kaydı anlamına gelmez.
@@ -264,24 +358,39 @@ def sorgu_mu(sade: str, ham: str, tutar_var: bool) -> bool:
     # "yaptik mi", "edildi mi" gibi soru eki
     if re.search(r"\b(?:yapildi|edildi|odendi|odedik|yaptik|alindi|girildi|islendi|kaydedildi)\s+m[iu]\b", sade):
         return True
+    # "Devrim'in odemeleri", "tum tahsilatlar": tutarsiz, kayit komutu olmayan cogul finans ismi = okuma istegi
+    if not tutar_var and COGUL_FINANS_RE.search(sade) and not _KAYIT_KOMUTU_RE.search(sade):
+        return True
     return False
 
 
-def kayit_mi(sade: str, tutar_var: bool, islem) -> bool:
+def kayit_mi(sade: str, tutar_var: bool, islem, varlik_var: bool = False) -> bool:
+    """Metin bir kayit talimati mi? ``varlik_var``: tanimli cari/proje/is kalemi + guclu tutar (islem turu sihirbazda sorulur)."""
     komut = bool(re.search(r"\b(ekle|kaydet|yaz|gir|isle|olustur)\w*", sade))
     pasif = bool(re.search(r"\b(yapildi|yapilmistir|odendi|odedik|odedim|alindi|girildi|tahsil\w*)\b", sade))
     if islem is not None:
         return tutar_var or komut or pasif
-    return tutar_var and komut
+    return tutar_var and (komut or varlik_var)
+
+
+def _tanimli_varlik_var(ham: str, katalog: Katalog, tutarlar) -> bool:
+    """Kisa, tutarli ve tanimli bir cari/proje/is kalemi iceren fiilsiz cumle ('Gokturk icin Devrim'e 10 bin')."""
+    if not any(t["guclu"] for t in tutarlar) or len(jetonlar(ham)) > 14:
+        return False
+    for adaylar in (katalog.cariler, katalog.projeler, katalog.kalemler):
+        if coz(ham, adaylar, bulanik=False).durum in (TEKIL, BELIRSIZ):
+            return True
+    return False
 
 
 def karmasik_mi(sade: str, ham: str, tutarlar) -> str:
     farkli = {(t["tutar"], t["pb"]) for t in tutarlar}
     if len(farkli) >= 2:
         return "birden fazla tutar"
-    if "\n" in ham.strip() or len(ham) > 320:
+    satir_sayisi = len([x for x in str(ham or "").splitlines() if x.strip()])
+    if satir_sayisi > 4 or len(ham) > 320:
         return "uzun/çok satırlı talimat"
-    if _icerir(sade, GELECEK_ANAHTARLARI):
+    if _icerir(sade, GELECEK_ANAHTARLARI) or cfo_dil.gelecek_mi(sade):
         return "ileri tarihli/vadeli ifade"
     if _icerir(f" {sade} ", KURALLI_ANAHTARLAR):
         return "çek/kredi/finansman kuralı"
@@ -307,13 +416,31 @@ def _aday_ekle(sonuc: Cozum, alan: str, niyet: Niyet):
     return None
 
 
+def _hesap_ipucundan_sec(n: Niyet, ham: str, hesap_adaylari, tuketilen) -> None:
+    """'kasadan'/'elden'/'nakit' -> kasa; 'bankadan'/'havale'/'EFT' -> banka. Yalniz TEK uygun hesap varsa secilir."""
+    ipucu = cfo_dil.hesap_ipucu(jetonlar(ham), tuketilen)
+    if not ipucu:
+        return
+    n.hesap_ipucu = ipucu
+    kelime = "kasa" if ipucu == "KASA" else "banka"
+    aday = [h for h in hesap_adaylari if kelime in norm(h.ad)]
+    if n.pb:
+        aday = [h for h in aday if h.ekle("pb", "TL") == n.pb]
+    elif len(aday) > 1:
+        aday = [h for h in aday if h.ekle("pb", "TL") == "TL"] or aday
+    if len(aday) == 1:
+        n.hesap = aday[0]
+        n.notlar.append(f"Hesap, ifadedeki '{kelime}' ipucundan çıkarıldı: {aday[0].ad}")
+
+
 def analiz_et(metin: str, katalog: Katalog, bugun: date | None = None, zorla: bool = False) -> Niyet:
     bugun = bugun or date.today()
     n = Niyet(metin=str(metin or "").strip())
-    ham = n.metin
+    # Analiz, yazi ile yazilmis sayilari rakama cevrilmis metinde yapilir; ``n.metin`` (denetim/orijinal talimat) degismez.
+    ham = cfo_dil.sayilari_cevir(n.metin)
     sade = norm(ham)
     tutarlar = tutar_cikar(ham)
-    n.islem = islem_cikar(sade)
+    n.islem = islem_cikar(sade, any(t["guclu"] for t in tutarlar))
 
     if not zorla and sorgu_mu(sade, ham, bool(tutarlar)):
         n.tur = "SORGU"
@@ -326,7 +453,16 @@ def analiz_et(metin: str, katalog: Katalog, bugun: date | None = None, zorla: bo
             CORRECTION: "Düzeltme kaydı sohbetten yapılamaz; açık taslağı 'Düzelt:' ile değiştirebilir veya iptal edebilirsiniz.",
         }[n.islem]
         return n
-    if not zorla and not kayit_mi(sade, bool(tutarlar), n.islem):
+    if not zorla:
+        # "odeme yapmadik", "yapilmadi", "yapmam lazim", "odeyelim": gerceklesmis bir hareketi ANLATMAZ -> kayit acilmaz
+        if cfo_dil.olumsuz_mu(sade):
+            n.reddedilen = "olumsuz ifade"
+            return n
+        if cfo_dil.gereklilik_mi(sade):
+            n.reddedilen = "gereklilik/istek ifadesi"
+            return n
+    varlik_var = bool(not zorla and tutarlar and n.islem is None and _tanimli_varlik_var(ham, katalog, tutarlar))
+    if not zorla and not kayit_mi(sade, bool(tutarlar), n.islem, varlik_var):
         return n            # ne tutar ne islem: selamlama/sohbet; kayit baslatilmaz
     n.tur = "KAYIT"
     n.karmasik_nedeni = "" if zorla else karmasik_mi(sade, ham, tutarlar)
@@ -405,6 +541,10 @@ def analiz_et(metin: str, katalog: Katalog, bugun: date | None = None, zorla: bo
     n.cari = _aday_ekle(c, "cari", n)
     if n.cari:
         tuketilen |= c.kullanilan
+        if not n.faaliyet and n.cari.ust and "banka" in norm(n.cari.ekle("cari_tipi")):
+            n.faaliyet = katalog.faaliyet(n.cari.ust)
+            if n.faaliyet:
+                n.notlar.append(f"Faaliyet cariden çıkarıldı: {n.cari.ad} → {n.faaliyet.ad}")
     elif c.durum == YOK and kismi_adaylar(ham, cari_adaylari, tuketilen):
         ortak = kismi_adaylar(ham, cari_adaylari, tuketilen)
         if len(ortak) > 1:
@@ -430,6 +570,18 @@ def analiz_et(metin: str, katalog: Katalog, bugun: date | None = None, zorla: bo
     # Hesap adlari faaliyet adini icerebilir ("Gursar TL Banka"); jeton tuketimi uygulanmaz.
     c = coz(ham, hesap_adaylari, frozenset(), bulanik=False)
     n.hesap = _aday_ekle(c, "hesap", n)
+    if not n.hesap and "hesap" not in n.belirsiz and "hesap" not in n.oneri:
+        _hesap_ipucundan_sec(n, ham, hesap_adaylari, tuketilen)
+
+    # --- yon denetimi: cari tipi fiilin yonunu degistirir ("Isveren 100 bin odedi" = tahsilat) ---
+    tip = norm(n.cari.ekle("cari_tipi")) if n.cari else ""
+    musteri = any(k in tip for k in ("musteri", "isveren"))
+    if n.islem in (PAYMENT, COUNTERPARTY_PAYMENT, WORK_ITEM_PAYMENT) and musteri and not yonelme_eki_var(ham, n.cari.ad):
+        n.islem = COLLECTION
+        n.notlar.append(f"'{n.cari.ad}' müşteri/işveren olduğu için ifade tahsilat olarak anlaşıldı.")
+    elif n.islem == COLLECTION and tip and not musteri and _aldik_tahsilati(sade):
+        n.islem = EXPENSE
+        n.notlar.append(f"'{n.cari.ad}' müşteri değil; 'aldık' ifadesi satın alma (gider) olarak anlaşıldı.")
 
     # --- iş kalemi/cari ayrimi (islem tipini inceltir) ---
     sade_kalem = bool(re.search(r"\bis kalem\w*", sade))

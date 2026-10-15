@@ -77,6 +77,34 @@ class DogalDilCozumlemeTestleri(CfoTestTemeli):
             self.assertTrue(n.karmasik, metin)
             self.assertIn(neden, n.karmasik_nedeni)
 
+    def test_kredi_odendi_karti_rapor_sorusu_degil_kayit_talimatidir(self):
+        from openpyxl import load_workbook
+        import master_data
+
+        wb = load_workbook(self.ana)
+        ws = wb["99_Ayarlar"]
+        ws["T20"] = "Kredi Taksit Ödemesi"
+        ws["AG20"], ws["AH20"], ws["AI20"] = "Gürsar İnşaat", "Banka", "Kredi Veren Banka"
+        wb.save(self.ana)
+        wb.close()
+        master_data.onbellegi_temizle()
+
+        metin = "Kredi Veren Banka\nKRD-001-01 · 2026-10-20\n₺25.755,79 ödemesi yapıldı"
+        n = self.niyet(metin)
+        self.assertEqual(n.tur, "KAYIT")
+        self.assertFalse(n.karmasik)
+        self.assertEqual(n.islem, N.COUNTERPARTY_PAYMENT)
+        self.assertEqual(n.faaliyet.kimlik, "gursar_mimarlik")
+        self.assertEqual(n.cari.ad, "Kredi Veren Banka")
+        self.assertEqual(n.tutar, Decimal("25755.79"))
+
+        y = cfo_sohbet.baslat(n, AKTOR, self.katalog(), bugun=BUGUN)
+        self.assertEqual(y["niyet"], "cfo_sihirbaz")
+        self.assertEqual(y["cfo"]["alanlar"]["islem_turu"], "Kredi Taksit Ödemesi")
+        self.assertEqual(y["cfo"]["soru"]["alan"], "hesap")
+        self.assertIn("Hangi hesap", y["cevap"])
+        self.assertNotIn("Toplam ödeme", y["cevap"])
+
     def test_desteklenmeyen_islemler_aciklanir(self):
         n = self.niyet("Gürsar'dan Holding'e 100 bin TL grup içi transfer yaz")
         self.assertEqual(n.islem, N.TRANSFER)

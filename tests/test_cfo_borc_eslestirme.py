@@ -316,8 +316,9 @@ class OrtakCariVeEksikBilgiTestleri(AcikBorcTemeli):
     def test_ortak_tipli_cariye_odeme_ortak_cari_odemesi_olur_borc_eslesmesi_aranmaz(self):
         self._devrim_ortak_yap()
         y = self.baslat("Göktürk okulunda Devrim'e 10 bin TL elden ödeme yapıldı")      # metinde 'ortak' kelimesi YOK
-        self.assertNotEqual(y["cfo"]["soru"]["alan"], "borc", y["cevap"])               # tedarikci borcu aranmaz
-        y = self.sec(y, y["cfo"]["soru"]["alan"], "Gürsar TL Kasa") if y["cfo"]["soru"]["alan"] == "hesap" else y
+        soru = y["cfo"].get("soru")             # 'elden' ifadesi kasayi belirler -> hesap sorusu kalmayabilir
+        self.assertNotEqual((soru or {}).get("alan"), "borc", y["cevap"])               # tedarikci borcu aranmaz
+        y = self.sec(y, soru["alan"], "Gürsar TL Kasa") if soru and soru["alan"] == "hesap" else y
         self.assertEqual(y["cfo"]["alanlar"]["islem_turu"], "Ortak Cari Ödemesi", y["cevap"])
         self.onayla(y)
         with cekirdek._baglanti() as con:

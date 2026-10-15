@@ -118,7 +118,7 @@ def _bos_taslak(metin, aktor, tekrar_no=0, bugun=None):
         "tekrar_no": tekrar_no, "faaliyet": None, "proje": None, "islem": None, "kalem_id": None,
         "kalem_ad": None, "kalem_yok": False, "cari": None, "cari_yeni": False, "cari_tipi": None,
         "tutar": None, "pb": None, "pb_acik": False, "tarih": None, "tarih_kaynagi": "", "hesap": None,
-        "hesap_kaynagi": "", "kur": None, "ortak_odemesi": False, "notlar": [], "adimlar": [],
+        "hesap_kaynagi": "", "hesap_ipucu": "", "kur": None, "ortak_odemesi": False, "notlar": [], "adimlar": [],
         "bekleyen_alan": None, "bekleyen_yeni_cari": None, "onay_token": None, "belge_id": None,
         "belirsiz": {}, "oneri": {}, "tarih_hatasi": "", "kapsam": None,
         "baglanti": None, "baglanti_karari": None, "eslesme": None, "mukerrer_onay": False, "yine_de": False,
@@ -142,6 +142,7 @@ def _niyetten_uygula(t, n: N.Niyet, katalog: Katalog):
         t["bekleyen_yeni_cari"] = n.yeni_cari_adi
     if n.hesap and not t["hesap"]:
         t["hesap"], t["hesap_kaynagi"] = n.hesap.ad, "metin"
+    t["hesap_ipucu"] = t.get("hesap_ipucu") or n.hesap_ipucu
     if n.islem and not t["islem"]:
         t["islem"] = n.islem
     if n.tutar and not t["tutar"]:
@@ -181,7 +182,13 @@ def _ortak(t) -> bool:
 
 
 def _islem_turu(t, katalog):
-    return N.islem_turu_bul(t["islem"], katalog.islem_turleri, _ortak(t)) if t["islem"] else None
+    if not t["islem"]:
+        return None
+    if t["islem"] in (N.PAYMENT, N.COUNTERPARTY_PAYMENT) and "banka" in norm(t.get("cari_tipi") or ""):
+        mevcut = {norm(x): x for x in katalog.islem_turleri}
+        if norm("Kredi Taksit Ödemesi") in mevcut:
+            return mevcut[norm("Kredi Taksit Ödemesi")]
+    return N.islem_turu_bul(t["islem"], katalog.islem_turleri, _ortak(t))
 
 
 def _kalem_gerekli(t, katalog) -> bool:
@@ -209,6 +216,12 @@ def _baglanti_turu(t):
 def _baglanti_gerekli(t, katalog) -> bool:
     return bool(_baglanti_turu(t) and t["faaliyet"] and t["proje"] and t["cari"] and t["tutar"]
                 and any(norm(p.ad) == norm(t["proje"]) for p in katalog.projeleri(t["faaliyet"])))
+
+
+def _proje_opsiyonel(t) -> bool:
+    """Kredi/banka ödemelerinde proje zorunlu değildir; kredi/taksit kodu açıklamada kanıt olarak kalır."""
+    return bool(t["islem"] in (N.PAYMENT, N.COUNTERPARTY_PAYMENT)
+                and "banka" in norm(t.get("cari_tipi") or ""))
 
 
 def _tutar_kurus(t, katalog) -> int:
@@ -309,6 +322,13 @@ def _hesap_otomatik(t, katalog):
     adaylar = _hesap_adaylari(t, katalog)
     if len(adaylar) == 1:
         return adaylar[0].ad, f"otomatik: {t['faaliyet']} faaliyetinde {_pb_coz(t, katalog)} için tek hesap"
+    ipucu = t.get("hesap_ipucu")
+    if ipucu:
+        # Metindeki "kasadan/elden" ya da "bankadan/havale" ipucu: yalniz TEK uygun hesap kaliyorsa (secenekler daraltilmaz)
+        kelime = "kasa" if ipucu == "KASA" else "banka"
+        daraltilmis = [h for h in adaylar if kelime in norm(h.ad)]
+        if len(daraltilmis) == 1:
+            return daraltilmis[0].ad, f"otomatik: ifadedeki '{kelime}' ipucu ({_pb_coz(t, katalog)})"
     f = _faaliyet(t, katalog)
     tur = _islem_turu(t, katalog)
     if f and t["cari"] and tur:
@@ -328,7 +348,7 @@ def eksik_alanlar(t, katalog) -> list[str]:
     if not t["faaliyet"]:
         e.append("faaliyet")
     f = _faaliyet(t, katalog)
-    if f and not t["proje"]:
+    if f and not t["proje"] and not _proje_opsiyonel(t):
         e.append("proje")
     if t["islem"] == N.PAYMENT and f and t["proje"] and not katalog.kalemleri(f.kimlik, t["proje"]):
         # Projede is kalemi yok: ayrim sorusu anlamsiz; ödeme cari ödemesidir.
