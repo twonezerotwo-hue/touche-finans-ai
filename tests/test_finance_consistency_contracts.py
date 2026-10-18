@@ -17,7 +17,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import excel_defter_mutabakati as mutabakat
+import excel_yazici
 import finans_cekirdegi as cekirdek
+import finans_islem_journali as journal
 import main
 import pytest
 import ui_belge_servisi as ui
@@ -71,20 +73,18 @@ class FinanceConsistencyContracts(CfoTestTemeli):
             row = con.execute(sql, params).fetchone()
             return row[0] if row else None
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="PR-03 atomik commit: Excel yazildi/DB kuyruga alindi durumunda basari donmemeli",
-    )
     def test_a01_excel_once_db_basarisizsa_tamamlandi_denememeli(self):
-        """Excel-first/DB-failure yolu PR-03 atomik sonucunu simdiden kilitler."""
+        """Excel-first/DB-failure yolu artik pending kurtarma sonucu doner."""
         hazir = self.belge("A01-DB-FAIL")
         with patch.object(main, "finans_kaydi_yaz", side_effect=sqlite3.OperationalError("synthetic db down")), \
              patch.object(main.time, "sleep"):
-            ok, _ = main.hazirlanan_belgeyi_yaz(hazir, "test")
+            ok, mesaj = main.hazirlanan_belgeyi_yaz(hazir, "test")
 
-        # Mevcut davranis Excel'i yazip kuyruga aliyor ve basari donduruyor.
-        # PR-03'te bu kontrat atomik hata/geri alma olarak degisecek.
         assert not ok
+        assert "kurtarma" in mesaj.casefold()
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("A01-DB-FAIL",)) == 0
+        assert self.db_scalar("SELECT state FROM finans_islemleri WHERE document_id=?", ("A01-DB-FAIL",)) == "PENDING_RECOVERY"
+        assert not self.audit_olaylari("belge_tamamlandi")
 
     def test_a02_db_on_kontrol_basarisizsa_excel_yazilmaz(self):
         hazir = self.belge("A02-PRE-DB-FAIL")
@@ -157,8 +157,8 @@ class FinanceConsistencyContracts(CfoTestTemeli):
         with patch.object(main, "finans_kaydi_yaz", side_effect=RuntimeError("db down")), \
              patch.object(main.time, "sleep"):
             main.hazirlanan_belgeyi_yaz(hazir, "test")
-        olaylar = self.audit_olaylari("muhasebe_fisi_kuyrukta")
-        assert olaylar and olaylar[-1]["belge_id"] == "A09-AUDIT"
+        olaylar = self.audit_olaylari("transaction_pending_recovery")
+        assert olaylar and olaylar[-1]["transaction_id"]
 
     def test_a10_ayni_belge_retry_idempotenttir(self):
         hazir = self.belge("A10-IDEMP", tutar=14_000)
@@ -214,17 +214,13 @@ class FinanceConsistencyContracts(CfoTestTemeli):
              patch.object(main.time, "sleep"):
             ok, mesaj = main.hazirlanan_belgeyi_yaz(hazir, "diagnostic")
 
-        # Bu test mevcut davranisi kanitlar; PR-03 atomik durum makinesi gelince
-        # beklenen sonuc degisecek ve A01 strict XFAIL yeniden PASS olacaktir.
-        assert ok is True
-        assert mesaj == ""
+        assert ok is False
+        assert "kurtarma" in mesaj.casefold()
         assert [x for x in self.ledger() if str(x.get("Kaynak_Belge_ID", "")).startswith("FIN-P01-DIAG-")]
         assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("FIN-P01-DIAG",)) == 0
-        assert self.queue.exists()
-        kuyruk = [json.loads(x) for x in self.queue.read_text(encoding="utf-8").splitlines() if x.strip()]
-        assert kuyruk and kuyruk[-1]["hazir"]["belge_id"] == "FIN-P01-DIAG"
-        tamam = self.audit_olaylari("belge_tamamlandi")
-        assert tamam and tamam[-1]["muhasebe_fisi"] == 0
+        assert not self.queue.exists()
+        assert self.db_scalar("SELECT state FROM finans_islemleri WHERE document_id=?", ("FIN-P01-DIAG",)) == "PENDING_RECOVERY"
+        assert not self.audit_olaylari("belge_tamamlandi")
         rapor = mutabakat.kontrol()
         assert not rapor["tutarli"]
         assert len(rapor["eksik_defterde"]) == 1
@@ -262,6 +258,11 @@ class FinanceConsistencyContracts(CfoTestTemeli):
                 main.hazirlanan_belgeyi_yaz(hazir, "subprocess-crash")
                 raise AssertionError("crash enjeksiyonu tetiklenmedi")
 
+            if mode == "recover":
+                from finans_islem_journali import recover_pending_transactions
+                print(json.dumps(recover_pending_transactions(), ensure_ascii=False))
+                raise SystemExit(0)
+
             import config
             from openpyxl import load_workbook
             workbook = load_workbook(config.ana_excel_yolu(), read_only=True, data_only=False)
@@ -276,12 +277,16 @@ class FinanceConsistencyContracts(CfoTestTemeli):
             if config.FINANS_DB.exists():
                 with sqlite3.connect(config.FINANS_DB) as con:
                     db_count = con.execute("SELECT COUNT(*) FROM fisler WHERE belge_id=?", (belge_id,)).fetchone()[0]
+                    journal = con.execute("SELECT state FROM finans_islemleri WHERE document_id=?", (belge_id,)).fetchall()
+            else:
+                journal = []
             queue = Path(config.LOGLAR) / "finans_sync_queue.jsonl"
             audit = Path(config.AUDIT_LOG)
             olaylar = []
             if audit.exists():
                 olaylar = [json.loads(line).get("olay") for line in audit.read_text(encoding="utf-8").splitlines() if line.strip()]
             print(json.dumps({{"excel_count": excel_count, "db_count": db_count,
+                               "journal": [row[0] for row in journal],
                                "queue_exists": queue.exists(), "completed": "belge_tamamlandi" in olaylar,
                                "audit_events": olaylar}}, ensure_ascii=False))
         """), encoding="utf-8")
@@ -310,15 +315,12 @@ class FinanceConsistencyContracts(CfoTestTemeli):
         durum = json.loads(inspect.stdout.strip().splitlines()[-1])
         assert durum["excel_count"] == 1
         assert durum["db_count"] == 0
+        assert durum["journal"] == ["PREPARED"], durum
         assert durum["queue_exists"] is False
         assert durum["completed"] is False
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="PR-03 process crash recovery markeri ve PENDING_RECOVERY kuyrugu henuz yok",
-    )
     def test_b02_ayri_surec_cokmesi_kalici_kurtarma_isareti_uretmelidir(self):
-        """Gelecek kontrati: ani kesilme sonrasi sistem kaydi kurtarma icin isaretlemeli."""
+        """Ani kesilme sonrasi ikinci surec Excel'den SQLite'a guvenle devam eder."""
         belge_id = "B02-SUBPROCESS-RECOVERY"
         child_root, _script, env = self._crash_process_files(belge_id)
         result = subprocess.run(
@@ -326,12 +328,20 @@ class FinanceConsistencyContracts(CfoTestTemeli):
             cwd=str(self.root), env=env, capture_output=True, text=True, timeout=20, check=False,
         )
         assert result.returncode == 47
+        recovered = subprocess.run(
+            [sys.executable, str(child_root / "child.py"), "recover", belge_id],
+            cwd=str(self.root), env=env, capture_output=True, text=True, timeout=20, check=False,
+        )
+        assert recovered.returncode == 0, recovered.stderr or recovered.stdout
         inspect = subprocess.run(
             [sys.executable, str(child_root / "child.py"), "inspect", belge_id],
             cwd=str(self.root), env=env, capture_output=True, text=True, timeout=20, check=False,
         )
         durum = json.loads(inspect.stdout.strip().splitlines()[-1])
-        assert durum["queue_exists"] is True or "PENDING_RECOVERY" in durum["audit_events"]
+        assert durum["excel_count"] == 1
+        assert durum["db_count"] == 1, recovered.stdout + recovered.stderr
+        assert durum["completed"] is False
+        assert "transaction_committed" in durum["audit_events"]
 
     def test_a16_ayni_belge_id_farkli_icerik_cakismasi_reddedilir(self):
         ilk = self.belge("A16-CONTENT-CONFLICT", tutar=20_000)
@@ -340,4 +350,269 @@ class FinanceConsistencyContracts(CfoTestTemeli):
         with pytest.raises(ValueError, match="farklı içerikle"):
             cekirdek.finans_kaydi_yaz(ikinci, "retry-farkli")
         assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("A16-CONTENT-CONFLICT",)) == 1
+
+    def _journal_state(self, document_id):
+        return self.db_scalar("SELECT state FROM finans_islemleri WHERE document_id=?", (document_id,))
+
+    def _pending_transaction(self, document_id):
+        hazir = self.belge(document_id, tutar=23_000)
+        result = journal.execute_transaction(
+            hazir, "test", excel_writer=excel_yazici.yaz,
+            db_writer=lambda *_args: (_ for _ in ()).throw(sqlite3.OperationalError("synthetic db unavailable")),
+        )
+        assert result["status"] == "PENDING_RECOVERY"
+        return hazir
+
+    def test_b03_sqlite_commit_sonrasi_journal_guncellenmeden_kurtarilir(self):
+        hazir = self.belge("B03-DB-COMMIT-CRASH", tutar=24_000)
+
+        def commit_then_crash(data, actor):
+            cekirdek.finans_kaydi_yaz(data, actor)
+            raise RuntimeError("synthetic crash after SQLite commit")
+
+        result = journal.execute_transaction(
+            hazir, "test", excel_writer=excel_yazici.yaz, db_writer=commit_then_crash,
+        )
+        assert result["status"] == "PENDING_RECOVERY"
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B03-DB-COMMIT-CRASH",)) == 1
+        recovered = journal.recover_pending_transactions()
+        assert recovered["committed"] == 1
+        assert self._journal_state("B03-DB-COMMIT-CRASH") == "COMMITTED"
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B03-DB-COMMIT-CRASH",)) == 1
+
+    def test_b04_excel_disaridan_degistiğinde_otomatik_kayit_yapilmaz(self):
+        hazir = self.belge("B04-EXTERNAL-CHANGE", tutar=25_000)
+
+        def writer(*args, **kwargs):
+            result = excel_yazici.yaz(*args, **kwargs)
+            from openpyxl import load_workbook
+            wb = load_workbook(self.ana)
+            try:
+                ws = wb["03_Kayıt Merkezi"]
+                for row in range(6, 300):
+                    if str(ws[f"Z{row}"].value or "").startswith("B04-EXTERNAL-CHANGE-"):
+                        ws[f"I{row}"] = 99_999
+                        break
+                wb.save(self.ana)
+            finally:
+                wb.close()
+            return result
+
+        result = journal.execute_transaction(hazir, "test", excel_writer=writer)
+        assert result["status"] == "NEEDS_REVIEW"
+        assert self._journal_state("B04-EXTERNAL-CHANGE") == "NEEDS_REVIEW"
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B04-EXTERNAL-CHANGE",)) == 0
+
+    def test_b05_recovery_dry_run_yazmaz(self):
+        self._pending_transaction("B05-DRY-RUN")
+        before = self._journal_state("B05-DRY-RUN")
+        report = journal.recovery_dry_run()
+        assert report["dry_run"] is True
+        assert any(x["transaction_id"] for x in report["sonuclar"])
+        assert self._journal_state("B05-DRY-RUN") == before == "PENDING_RECOVERY"
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B05-DRY-RUN",)) == 0
+
+    def test_b06_kurtarma_iki_kez_ve_es_zamanli_cift_fis_uretmez(self):
+        self._pending_transaction("B06-RECOVERY-IDEMP")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _index: journal.recover_pending_transactions(), range(2)))
+        assert all(x["needs_review"] == 0 for x in results)
+        assert self._journal_state("B06-RECOVERY-IDEMP") == "COMMITTED"
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B06-RECOVERY-IDEMP",)) == 1
+        assert journal.recover_pending_transactions()["islem_sayisi"] == 0
+
+    def test_b07_bozuk_journal_needs_review_olarak_kapanir(self):
+        self._pending_transaction("B07-CORRUPT-JOURNAL")
+        with cekirdek._baglanti() as con:
+            con.execute("UPDATE finans_islemleri SET expected_excel_ids=? WHERE document_id=?", ("{bozuk", "B07-CORRUPT-JOURNAL"))
+        report = journal.recover_pending_transactions()
+        assert report["needs_review"] == 1
+        assert self._journal_state("B07-CORRUPT-JOURNAL") == "NEEDS_REVIEW"
+
+    def test_b08_audit_yazilamazsa_onarim_kaniti_korunur(self):
+        hazir = self.belge("B08-AUDIT-REPAIR", tutar=26_000)
+        with patch.object(journal, "audit_yaz", side_effect=OSError("audit unavailable")):
+            result = journal.execute_transaction(hazir, "test", excel_writer=excel_yazici.yaz)
+        assert result["status"] == "COMMITTED"
+        assert self.db_scalar("SELECT audit_repair_required FROM finans_islemleri WHERE document_id=?", ("B08-AUDIT-REPAIR",)) == 1
+
+    def test_b09_mutabakat_kurtarma_sirasinda_uyarir_sonra_duzelir(self):
+        self._pending_transaction("B09-RECON-RECOVERY")
+        assert mutabakat.kontrol()["tutarli"] is False
+        journal.recover_pending_transactions()
+        assert mutabakat.kontrol()["tutarli"] is True
+
+    def test_b10_prepared_restart_guvenli_aborted_sonucu_uretmez(self):
+        hazir = self.belge("B10-PREPARED-RESTART", tutar=27_000)
+        tx = journal.prepare_transaction(hazir, "test")
+        assert tx["state"] == "PREPARED"
+        dry = journal.recovery_dry_run()
+        assert dry["sonuclar"][0]["status"] == "ABORTED"
+        assert self._journal_state("B10-PREPARED-RESTART") == "PREPARED"
+        report = journal.recover_pending_transactions()
+        assert report["committed"] == 0
+        assert self._journal_state("B10-PREPARED-RESTART") == "ABORTED"
+
+    def test_b11_excel_fingerprint_persist_edilmeden_cokme_guvenli_kurtarilir(self):
+        """PREPARED + tam Excel satırı, hash doğrulanmadan SQLite'a yazılamaz."""
+        hazir = self.belge("B11-FINGERPRINT-BEFORE", tutar=28_000)
+        journal.prepare_transaction(hazir, "test")
+        excel_yazici.yaz(
+            hazir["firma_key"], hazir["veri"], hazir["belge_id"], aktor="test"
+        )
+        report = journal.recover_pending_transactions()
+        assert report["committed"] == 1
+        assert self._journal_state("B11-FINGERPRINT-BEFORE") == "COMMITTED"
+
+    def test_b12_restart_oncesi_excel_tutari_degiserse_needs_review(self):
+        self._pending_transaction("B12-EXCEL-AMOUNT-CHANGE")
+        from openpyxl import load_workbook
+
+        wb = load_workbook(self.ana)
+        try:
+            ws = wb["03_Kayıt Merkezi"]
+            for row in range(6, 300):
+                if str(ws[f"Z{row}"].value or "").startswith("B12-EXCEL-AMOUNT-CHANGE-"):
+                    ws[f"I{row}"] = 99_999
+                    break
+            wb.save(self.ana)
+        finally:
+            wb.close()
+        report = journal.recover_pending_transactions()
+        assert report["needs_review"] == 1
+        assert self._journal_state("B12-EXCEL-AMOUNT-CHANGE") == "NEEDS_REVIEW"
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B12-EXCEL-AMOUNT-CHANGE",)
+        ) == 0
+
+    def test_b13_sqlite_tutari_degiserse_ayni_voucher_id_yeterli_degil(self):
+        hazir = self.belge("B13-SQLITE-AMOUNT-CHANGE", tutar=29_000)
+
+        def commit_then_crash(data, actor):
+            cekirdek.finans_kaydi_yaz(data, actor)
+            raise RuntimeError("synthetic crash after SQLite commit")
+
+        result = journal.execute_transaction(
+            hazir, "test", excel_writer=excel_yazici.yaz, db_writer=commit_then_crash
+        )
+        assert result["status"] == "PENDING_RECOVERY"
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE fis_satirlari SET borc_kurus=borc_kurus+1 "
+                "WHERE fis_id=? AND satir_no=1",
+                ("JRN-B13-SQLITE-AMOUNT-CHANGE-001",),
+            )
+        report = journal.recover_pending_transactions()
+        assert report["needs_review"] == 1
+        assert self._journal_state("B13-SQLITE-AMOUNT-CHANGE") == "NEEDS_REVIEW"
+
+    def test_b14_needs_review_baslangicta_asla_otomatik_post_etmez(self):
+        self._pending_transaction("B14-REVIEW-NO-REPOST")
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE finans_islemleri SET expected_excel_fingerprint=? WHERE document_id=?",
+                ("bad-fingerprint", "B14-REVIEW-NO-REPOST"),
+            )
+        first = journal.recover_pending_transactions()
+        second = journal.recover_pending_transactions()
+        assert first["needs_review"] == second["needs_review"] == 1
+        assert self._journal_state("B14-REVIEW-NO-REPOST") == "NEEDS_REVIEW"
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B14-REVIEW-NO-REPOST",)
+        ) == 0
+
+    def test_b15_dry_run_db_ve_dosyalari_byte_byte_ayni_kalir(self):
+        self._pending_transaction("B15-DRY-RUN-BYTES")
+        paths = [self.ana, self.yedek, self.root / "finans.db", self.audit]
+        before = {str(path): path.read_bytes() if path.exists() else None for path in paths}
+        journal.recovery_dry_run()
+        after = {str(path): path.read_bytes() if path.exists() else None for path in paths}
+        assert after == before
+
+    def test_b16_audit_onarimi_finansal_postingi_tekrarlamaz(self):
+        hazir = self.belge("B16-AUDIT-REPAIR", tutar=30_000)
+        with patch.object(journal, "audit_yaz", side_effect=OSError("audit unavailable")):
+            result = journal.execute_transaction(hazir, "test", excel_writer=excel_yazici.yaz)
+        assert result["status"] == "COMMITTED"
+        tx_id = result["transaction_id"]
+        before_count = self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B16-AUDIT-REPAIR",)
+        )
+        repaired = journal.repair_audit(tx_id)
+        assert repaired["repaired"] is True
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B16-AUDIT-REPAIR",)
+        ) == before_count
+        assert self.db_scalar(
+            "SELECT audit_repair_required FROM finans_islemleri WHERE transaction_id=?", (tx_id,)
+        ) == 0
+        assert journal.repair_audit(tx_id)["repaired"] is False
+
+    def test_b17_es_zamanli_farkli_icerikli_prepare_belge_kimligi_cakisir(self):
+        def prepare(amount):
+            try:
+                return journal.prepare_transaction(
+                    self.belge("B17-CONCURRENT-DOCUMENT", tutar=amount), "test"
+                )
+            except Exception as exc:  # noqa: BLE001 - conflict is the assertion
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(prepare, (31_000, 32_000)))
+        successes = [item for item in results if isinstance(item, dict)]
+        failures = [item for item in results if isinstance(item, Exception)]
+        assert len(successes) == 1
+        assert len(failures) == 1
+        assert isinstance(failures[0], ValueError)
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM finans_islemleri WHERE document_id=?",
+            ("B17-CONCURRENT-DOCUMENT",),
+        ) == 1
+
+    def test_b18_needs_review_yetkisiz_kurtarma_reddedilir_ve_owner_acikca_onaylar(self):
+        self._pending_transaction("B18-MANUAL-REVIEW")
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE finans_islemleri SET state='NEEDS_REVIEW' WHERE document_id=?",
+                ("B18-MANUAL-REVIEW",),
+            )
+        tx_id = self.db_scalar(
+            "SELECT transaction_id FROM finans_islemleri WHERE document_id=?",
+            ("B18-MANUAL-REVIEW",),
+        )
+        with pytest.raises(PermissionError, match="doğrulanmış oturum"):
+            journal.authorize_needs_review(tx_id, "forged-admin", "manuel kurtarma kararı")
+        viewer = {
+            "yetkili": True, "kimlik": "viewer", "rol": "VIEWER",
+            "faaliyetler": ["*"], "projeler": ["*"],
+        }
+        with pytest.raises(PermissionError):
+            journal.authorize_needs_review(tx_id, "viewer", "Bu işlem incelendi", authorization=viewer)
+        owner = {
+            "yetkili": True, "kimlik": "owner", "rol": "OWNER",
+            "faaliyetler": ["*"], "projeler": ["*"],
+        }
+        result = journal.authorize_needs_review(
+            tx_id, "owner", "Excel ve journal kanıtları manuel olarak doğrulandı", authorization=owner
+        )
+        assert result["status"] == "COMMITTED"
+        assert self._journal_state("B18-MANUAL-REVIEW") == "COMMITTED"
+
+    def test_b19_recovery_health_canli_durumlari_ve_startup_hatasini_gosterir(self):
+        self._pending_transaction("B19-HEALTH")
+        health = journal.recovery_health()
+        assert health["durum"] == "degraded"
+        assert health["pending_recovery"] == 1
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE finans_islemleri SET state='NEEDS_REVIEW', audit_repair_required=1 "
+                "WHERE document_id=?", ("B19-HEALTH",)
+            )
+        health = journal.recovery_health()
+        assert health["needs_review"] == 1
+        assert health["audit_repair_required"] == 1
+        failed = journal.recovery_health(startup_ready=False, startup_error="synthetic startup failure")
+        assert failed["durum"] == "degraded"
+        assert failed["hata"] == "synthetic startup failure"
 

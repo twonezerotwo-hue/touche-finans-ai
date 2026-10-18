@@ -66,6 +66,14 @@ from ticari import alacaklar, borclar, yaklasan_odemeler  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("finans_asistani")
 
+RECOVERY_HEALTH = {
+    "durum": "not_run",
+    "islem_sayisi": 0,
+    "needs_review": 0,
+    "pending_recovery": 0,
+    "hata": None,
+}
+
 
 def _ekran_kpi(faaliyet, profil):
     """Tüm ekranlarda karar panosunun tek likidite/ödeme hesabını kullanır."""
@@ -273,7 +281,17 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(yol.read_bytes())
             return
         if parsed.path == "/api/health":
-            return self._json({"durum": "ok", "yerel": True})
+            from finans_islem_journali import recovery_health
+
+            live_recovery = recovery_health(
+                startup_ready=RECOVERY_HEALTH["durum"] != "not_run",
+                startup_error=RECOVERY_HEALTH.get("hata"),
+            )
+            return self._json({
+                "durum": "ok" if live_recovery["durum"] == "ok" else "degraded",
+                "yerel": True,
+                "recovery": live_recovery,
+            })
         if parsed.path == "/api/session":
             return self._json(self._oturum())
         session = self._yetki_gerekli()
@@ -723,6 +741,20 @@ class Handler(BaseHTTPRequestHandler):
                                     entity_type="belge", entity_id=token)
                     return self._json(sonuc)
                 return self._json(belge_duzelt(token, self._body().get("degisiklikler"), session["kimlik"]))
+            eslesme = __import__("re").fullmatch(r"/api/recovery/(TX-[a-f0-9]{32})/authorize", yol)
+            if eslesme:
+                rol_yetki.kontrol(self._rol(session), "finans.duzenle")
+                rol_yetki.kontrol(self._rol(session), "audit.goruntule")
+                body = self._body()
+                from finans_islem_journali import authorize_needs_review
+
+                sonuc = authorize_needs_review(
+                    eslesme.group(1),
+                    session.get("kimlik") or "",
+                    body.get("reason") or body.get("gerekce") or "",
+                    authorization=session,
+                )
+                return self._json(sonuc)
             eslesme = __import__("re").fullmatch(r"/api/proje-kalemi/([A-Za-z0-9._-]{1,80})/guncelle", yol)
             if eslesme:
                 rol_yetki.kontrol(self._rol(session), "finans.duzenle")
@@ -816,7 +848,40 @@ def baslangic_ozeti(host="127.0.0.1", port=8765) -> list[str]:
 
 
 def calistir(host="127.0.0.1", port=None):
+    global RECOVERY_HEALTH
     port = int(port or os.environ.get("FINANS_UI_PORT", "8765"))
+    # Uygulama yeniden başlarken yalnız kalıcı journal kanıtı olan işlemleri
+    # tarar; belirsiz workbook/DB ayrışmalarını otomatik yazmadan NEEDS_REVIEW'e
+    # bırakır. Bu tarama canlı ödeme yapmaz.
+    try:
+        from finans_islem_journali import recover_pending_transactions
+
+        recovery = recover_pending_transactions()
+        RECOVERY_HEALTH = {
+            "durum": (
+                "degraded"
+                if recovery.get("needs_review") or recovery.get("pending_recovery")
+                else "ok"
+            ),
+            "islem_sayisi": recovery.get("islem_sayisi", 0),
+            "needs_review": recovery.get("needs_review", 0),
+            "pending_recovery": recovery.get("pending_recovery", 0),
+            "hata": None,
+        }
+        log.info(
+            "Finans recovery taraması: %s işlem, %s tamamlandı, %s inceleme",
+            recovery.get("islem_sayisi", 0), recovery.get("committed", 0),
+            recovery.get("needs_review", 0),
+        )
+    except Exception as exc:  # noqa: BLE001 - recovery başlatmayı durdurmamalı
+        RECOVERY_HEALTH = {
+            "durum": "degraded",
+            "islem_sayisi": 0,
+            "needs_review": 0,
+            "pending_recovery": 0,
+            "hata": f"{type(exc).__name__}: {exc}",
+        }
+        log.error("Finans recovery taraması başlatılamadı: %s", exc)
     sunucu = ThreadingHTTPServer((host, port), Handler)
     for satir in baslangic_ozeti(host, port):
         print(satir, flush=True)

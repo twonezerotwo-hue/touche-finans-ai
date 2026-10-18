@@ -165,3 +165,17 @@ Final PR-02 koşusu **39135289792** (commit `2bade5483b044c699923c59310da736bdef
 
 CI'da üretim Excel/SQLite erişimi açılmamıştır. Run bağlantısı:
 `https://github.com/twonezerotwo-hue/touche-finans-ai/actions/runs/39135289792`.
+
+## PR-03 tamamlanan uygulama
+
+PR-03 branch'inde FIN-P01 ve FIN-P02 artık strict XFAIL değil, geçen
+regresyon sözleşmeleridir. Kalıcı `finans_islemleri` journal'ı ve
+`finans_islem_olaylari` geçiş kaydı, mevcut tek Excel yazıcısıyla birlikte
+çalışır. `PREPARED -> EXCEL_WRITTEN -> DB_POSTED -> COMMITTED` akışı; hata,
+kilit, dış değişiklik veya süreç kesintisinde `PENDING_RECOVERY`,
+`NEEDS_REVIEW` ya da `ABORTED` durumuna geçer.
+
+PR-03 odak paketi: **27 passed**. Ek senaryolar; SQLite commit sonrası journal
+kesintisi, tekrarlı/eşzamanlı recovery, dry-run, dış workbook değişikliği,
+bozuk journal, audit onarım kanıtı ve recovery sırasında mutabakat kontrolüdür.
+Detaylı protokol ve şema: `FINANCIAL_COMMIT_RECOVERY.md`.
