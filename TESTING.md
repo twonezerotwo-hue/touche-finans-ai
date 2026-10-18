@@ -1,8 +1,8 @@
 # TESTING
 
 ```bash
-pip install -r requirements.txt          # + optional: pip install playwright   (browser tests)
-python -m pytest -q                      # whole suite (~40 s)
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q -rs                   # whole suite with explicit skip reasons
 ruff check scripts tests --select F,E9   # lint used in this repo
 python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_defter_mutabakati.py \
     scripts/cfo_niyet.py scripts/cfo_sohbet.py scripts/cfo_sorgu.py scripts/cfo_varliklar.py \
@@ -13,6 +13,30 @@ Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests`
 
 Result at the time of writing: **408+ passed, 2 skipped** (a skip needs a copy of a production DB, see below).
 Baseline on the original commit: 6 modules failed at import; with that worked around, 126 passed / 21 failed.
+
+## PR-01 CI baseline
+
+GitHub Actions runs the isolated suite on Python 3.12 under Ubuntu and Windows, then attempts Chromium browser tests when
+the runner can provide a browser. Ruff and mypy are intentionally reported as non-blocking baseline diagnostics in PR-01;
+the existing tree has known debt (recorded in the audit) and application logic is not rewritten just to hide it. Later PRs
+will ratchet these checks to blocking gates module by module. The dependency audit and production-path/secret scan also run
+on every push and pull request. CI always redirects `TOUCHE_*` paths to `.ci-runtime` and never receives production files.
+
+The first GitHub Actions run for PR-01 was `39116113782`: Ubuntu completed with **408 passed / 3 skipped**, Windows with
+**409 passed / 2 skipped**, and dependency audit completed. The secret scan failed because its own workflow comment contained
+the path pattern it scans. This was corrected without weakening the scanner. The dependency audit is now blocking for known
+vulnerabilities; the `excel-parser` VCS dependency is reported separately and is explicitly not considered audited.
+
+After the fix, run `39121924145` completed successfully. Exact skipped tests were:
+
+* Ubuntu: `tests/test_acceptance.py:300` (production DB copy not configured),
+  `tests/test_cfo_borc_eslestirme.py:400` (Windows-only Excel sharing lock), and
+  `tests/test_phase1.py:230` (optional `pdftoppm`/Poppler unavailable).
+* Windows: `tests/test_acceptance.py:300` (production DB copy not configured) and
+  `tests/test_phase1.py:230` (optional `pdftoppm`/Poppler unavailable).
+
+The successful run recorded **408 passed / 3 skipped / 352 subtests** on Ubuntu and
+**409 passed / 2 skipped / 352 subtests** on Windows. Dependency audit and secret/path scan both passed.
 
 ## Production data is never touched
 

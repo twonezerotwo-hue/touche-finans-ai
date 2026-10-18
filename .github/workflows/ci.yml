@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "codex/**", "chore/**", "test/**", "fix/**", "feat/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      PYTHONUTF8: "1"
+      # CI resolves only the repository's disposable runtime directory.
+      TOUCHE_BASE_DIR: ${{ github.workspace }}/.ci-runtime
+      TOUCHE_MAIN_WORKBOOK: ${{ github.workspace }}/.ci-runtime/veri/TEST.xlsx
+      TOUCHE_BACKUP_WORKBOOK: ${{ github.workspace }}/.ci-runtime/yedek/TEST_backup.xlsx
+      TELEGRAM_BOT_TOKEN: 0:test-token-no-network
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install application and developer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Install Chromium when available
+        shell: bash
+        continue-on-error: true
+        run: python -m playwright install chromium
+      - name: Verify test paths are isolated
+        run: python -m pytest -q tests/test_test_izolasyonu.py
+      - name: Run isolated test suite
+        run: python -m pytest -q -rs
+      - name: Ruff baseline (reported, not application rewrite)
+        continue-on-error: true
+        run: python -m ruff check scripts tests
+      - name: Incremental mypy baseline (reported, not application rewrite)
+        continue-on-error: true
+        run: python -m mypy scripts
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install audit tool
+        run: python -m pip install --upgrade pip-audit
+      - name: Audit pinned dependencies
+        run: python -m pip_audit -r requirements.txt
+      - name: Report unsupported VCS dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "NOTICE: excel-parser is installed from a VCS URL and is not audited by pip-audit."
+          grep -n '^excel-parser[[:space:]]*@' requirements.txt
+
+  secret-scan:
+    name: Secret and production-path scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject committed secrets and production paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -n -I -E '(sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{20,}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY)' -- . ':!*.md'; then
+            echo "Potential secret found in tracked source" >&2
+            exit 1
+          fi
+          # The legacy Windows default is documented application configuration;
+          # Personal workstation paths must never be committed.
+          if git grep -n -I -E 'OneDrive[/\\](Desktop|Belgeler)|Users[/\\][^/\\]+[/\\](Desktop|Documents)' -- . ':!*.md' ':!scripts/config.py'; then
+            echo "Personal data path found in tracked source" >&2
+            exit 1
+          fi
