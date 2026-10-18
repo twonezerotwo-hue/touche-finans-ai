@@ -25,7 +25,8 @@ from guvenlik import audit_yaz, belge_sha256, finansal_fingerprint
 from belge_dosyasi import BELGE_UZANTILARI, gecicileri_temizle, model_gorseli_hazirla
 from master_data import master_data_oku
 from invoice2data_adapter import belgeyi_oku as invoice2data_oku
-from finans_cekirdegi import fis_taslaklari, finans_kaydi_kuyruga_al, finans_kaydi_yaz
+from finans_cekirdegi import fis_taslaklari, finans_kaydi_yaz
+from finans_islem_journali import execute_transaction, mark_audit_repair
 
 def _log_kur():
     """Gunluk log dosyasini kurar; klasor yoksa olusturur, yazilamazsa konsola duser."""
@@ -477,37 +478,45 @@ def hazirlanan_belgeyi_yaz(hazir, onay_kaynagi="otomatik"):
         "normalize_komut": hazir.get("normalize_komut"), "onay_kaynagi": onay_kaynagi,
         "taslak_id": hazir.get("taslak_id"),
     }
-    sonuc = yaz(hazir["firma_key"], hazir["veri"], hazir["belge_id"], aktor=str(onay_kaynagi), baglam=baglam)
-    if not sonuc["basari"]:
-        audit_yaz("belge_isleme_hatasi", belge_id=hazir["belge_id"], hata=sonuc["hata"])
-        if sonuc.get("hata_kodu") != "MUKERRER_BELGE":
-            return False, sonuc["hata"]
-        # Ayni belge Excel'e daha once yazilmis (yeniden deneme/cift tiklama/cokme sonrasi):
-        # ikinci Excel kaydi olusmaz; merkez defter adimi idempotent oldugundan yine calistirilir.
-        audit_yaz("belge_tekrar_onayi_idempotent", belge_id=hazir["belge_id"])
-        sonuc = {"basari": True, "yazilan": 0, "tekrar": True}
-    son_hata = None
-    for deneme in range(3):
-        try:
-            fis_sonucu = finans_kaydi_yaz(hazir, onay_kaynagi)
-            son_hata = None
-            break
-        except Exception as exc:
-            son_hata = exc
-            if deneme < 2:
-                time.sleep(0.2 * (deneme + 1))
-    if son_hata is not None:
-        finans_kaydi_kuyruga_al(hazir, onay_kaynagi, son_hata)
-        fis_sonucu = {"fis_sayisi": 0}
-        audit_yaz("muhasebe_fisi_kuyrukta", belge_id=hazir["belge_id"], hata=str(son_hata))
+    try:
+        fis_sonucu = execute_transaction(
+            hazir,
+            onay_kaynagi,
+            excel_writer=yaz,
+            db_writer=finans_kaydi_yaz,
+            excel_context=baglam,
+        )
+    except Exception as exc:
+        audit_yaz("transaction_needs_review", belge_id=hazir.get("belge_id"), hata=str(exc))
+        hazir["_transaction_status"] = "NEEDS_REVIEW"
+        return False, "İşlem günlüğü hazırlanamadı; otomatik işlem yapılmadı."
+    hazir["_transaction_id"] = fis_sonucu.get("transaction_id")
+    hazir["_transaction_status"] = fis_sonucu.get("status")
+    if not fis_sonucu.get("committed"):
+        status = fis_sonucu.get("status") or "NEEDS_REVIEW"
+        mesajlar = {
+            "PENDING_RECOVERY": "İşlem henüz tamamlanmadı. Güvenli kurtarma bekliyor. Aynı ödemeyi tekrar oluşturmayın.",
+            "NEEDS_REVIEW": "İşlem kontrol gerektiriyor. Otomatik işlem yapılmadı.",
+            "ABORTED": "İşlem kaydedilmedi; işlem günlüğü güvenli şekilde durduruldu.",
+        }
+        if status == "PENDING_RECOVERY" and "kilit" in str(fis_sonucu.get("hata") or "").casefold():
+            mesajlar[status] = str(fis_sonucu["hata"])
+        audit_yaz("belge_isleme_hatasi", belge_id=hazir["belge_id"],
+                  status=status, transaction_id=fis_sonucu.get("transaction_id"),
+                  hata=fis_sonucu.get("hata") or status)
+        return False, mesajlar.get(status, fis_sonucu.get("hata") or "İşlem tamamlanmadı.")
     foto_yolu = hazir.get("foto_yolu")
     if foto_yolu and Path(foto_yolu).exists():
         _arsive_tasi(Path(foto_yolu), hazir["firma_key"], hazir["tur"])
     gecicileri_temizle(hazir.get("gecici_dosyalar"))
-    audit_yaz("belge_tamamlandi", belge_id=hazir["belge_id"], firma=hazir["firma_key"],
-               tur=hazir["tur"], yazilan=sonuc["yazilan"],
-               holding_yazilan=sonuc.get("holding_yazilan", 0), onay_kaynagi=onay_kaynagi,
-               muhasebe_fisi= fis_sonucu.get("fis_sayisi", 0))
+    try:
+        audit_yaz("belge_tamamlandi", belge_id=hazir["belge_id"], firma=hazir["firma_key"],
+                  tur=hazir["tur"], yazilan=fis_sonucu.get("yazilan", 0),
+                  holding_yazilan=fis_sonucu.get("holding_yazilan", 0), onay_kaynagi=onay_kaynagi,
+                  muhasebe_fisi=fis_sonucu.get("fis_sayisi", 0),
+                  transaction_id=fis_sonucu.get("transaction_id"), status="COMMITTED")
+    except Exception as exc:  # noqa: BLE001 - finansal commit'i geri almadan audit onarımı işaretlenir
+        mark_audit_repair(fis_sonucu.get("transaction_id"), str(exc))
     return True, ""
 
 

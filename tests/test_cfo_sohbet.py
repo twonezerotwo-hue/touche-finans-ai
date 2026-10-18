@@ -352,9 +352,11 @@ class OnayTekrarVeDenetimTestleri(CfoTestTemeli):
         n = len(self.ledger())
         from unittest.mock import patch
 
-        with patch.object(depo.os, "replace", side_effect=kilitli), self.assertRaises(RuntimeError) as cm:
-            self.onayla(y)
-        self.assertIn("Excel pencerelerini kapatın", str(cm.exception))
+        with patch.object(depo.os, "replace", side_effect=kilitli):
+            sonuc = self.onayla(y)
+        self.assertFalse(sonuc["tamam"])
+        self.assertEqual(sonuc["status"], "PENDING_RECOVERY")
+        self.assertIn("Excel pencerelerini kapatın", str(sonuc["mesaj"]))
         self.assertEqual(len(self.ledger()), n)
         self.assertEqual(ui.ozet(y["kayit_taslagi"]["token"])["durum"], "ONAY_BEKLIYOR")
         self.onayla(y)                                                       # kilit kalkınca tekrar denenir

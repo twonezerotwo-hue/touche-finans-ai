@@ -245,6 +245,10 @@ def ozet(token):
     dogrulama = hazir.get("dogrulama") or {}
     return {
         "token": token, "durum": veri["durum"], "olusturma": veri["olusturma"],
+        "transaction_id": veri.get("transaction_id") or hazir.get("_transaction_id"),
+        "status": veri.get("transaction_status") or veri.get("durum") or hazir.get("_transaction_status"),
+        "committed": veri.get("durum") == "TAMAMLANDI",
+        "recovery_required": veri.get("durum") in {"PENDING_RECOVERY", "NEEDS_REVIEW"},
         "kaynak_turu": veri.get("kaynak_turu", "belge"),
         "onay": veri.get("onay"),
         "belge_id": hazir.get("belge_id"), "dosya": Path(str(hazir.get("foto_yolu") or "Belge")).name,
@@ -353,7 +357,41 @@ def onayla(token, aktor, parola=None):
         bekleyen.pop("onay", None)
         basarili, mesaj = hazirlanan_belgeyi_yaz(hazir, onay_kaynagi=f"ui:{aktor}")
         if not basarili:
-            raise RuntimeError(mesaj or "Excel kaydı başarısız.")
+            status = str(hazir.get("_transaction_status") or "NEEDS_REVIEW")
+            if status not in {"PENDING_RECOVERY", "NEEDS_REVIEW", "ABORTED"}:
+                status = "NEEDS_REVIEW"
+            retryable_lock = status == "PENDING_RECOVERY" and any(
+                kelime in (mesaj or "").casefold() for kelime in ("excel", "kilitli", "onedrive")
+            )
+            if retryable_lock:
+                bekleyen["transaction_id"] = hazir.get("_transaction_id")
+                bekleyen["transaction_status"] = status
+                bekleyen["hata"] = mesaj or status
+                _kaydet()
+                return {
+                    "tamam": False,
+                    "committed": False,
+                    "status": status,
+                    "recovery_required": True,
+                    "retryable": True,
+                    "transaction_id": hazir.get("_transaction_id"),
+                    "mesaj": mesaj or status,
+                    "belge": ozet(token),
+                }
+            bekleyen["durum"] = status
+            bekleyen["transaction_id"] = hazir.get("_transaction_id")
+            bekleyen["hata"] = mesaj or status
+            bekleyen["tamamlanma"] = datetime.now().isoformat(timespec="seconds")
+            _kaydet()
+            return {
+                "tamam": False,
+                "committed": False,
+                "status": status,
+                "recovery_required": status == "PENDING_RECOVERY",
+                "transaction_id": hazir.get("_transaction_id"),
+                "mesaj": mesaj or status,
+                "belge": ozet(token),
+            }
         bekleyen["durum"] = "TAMAMLANDI"
         bekleyen["tamamlanma"] = datetime.now().isoformat(timespec="seconds")
         _kaydet()

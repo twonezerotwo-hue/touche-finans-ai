@@ -817,6 +817,20 @@ def baslangic_ozeti(host="127.0.0.1", port=8765) -> list[str]:
 
 def calistir(host="127.0.0.1", port=None):
     port = int(port or os.environ.get("FINANS_UI_PORT", "8765"))
+    # Uygulama yeniden başlarken yalnız kalıcı journal kanıtı olan işlemleri
+    # tarar; belirsiz workbook/DB ayrışmalarını otomatik yazmadan NEEDS_REVIEW'e
+    # bırakır. Bu tarama canlı ödeme yapmaz.
+    try:
+        from finans_islem_journali import recover_pending_transactions
+
+        recovery = recover_pending_transactions()
+        log.info(
+            "Finans recovery taraması: %s işlem, %s tamamlandı, %s inceleme",
+            recovery.get("islem_sayisi", 0), recovery.get("committed", 0),
+            recovery.get("needs_review", 0),
+        )
+    except Exception as exc:  # noqa: BLE001 - recovery başlatmayı durdurmamalı
+        log.error("Finans recovery taraması başlatılamadı: %s", exc)
     sunucu = ThreadingHTTPServer((host, port), Handler)
     for satir in baslangic_ozeti(host, port):
         print(satir, flush=True)

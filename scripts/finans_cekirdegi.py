@@ -139,6 +139,38 @@ CREATE TABLE IF NOT EXISTS belge_butunlugu (
   belge_id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, finansal_hash TEXT,
   kaynak TEXT, kayit_zamani TEXT NOT NULL, son_dogrulama TEXT, dogrulama_durumu TEXT
 );
+CREATE TABLE IF NOT EXISTS finans_islemleri (
+  transaction_id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  financial_hash TEXT NOT NULL,
+  approval_identity TEXT NOT NULL,
+  firma_key TEXT NOT NULL,
+  belge_turu TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL CHECK(state IN ('PREPARED','EXCEL_WRITTEN','DB_POSTED','COMMITTED','PENDING_RECOVERY','NEEDS_REVIEW','ABORTED')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expected_excel_ids TEXT NOT NULL DEFAULT '[]',
+  expected_excel_fingerprint TEXT,
+  expected_db_ids TEXT NOT NULL DEFAULT '[]',
+  workbook_hash_before TEXT,
+  workbook_hash_after TEXT,
+  recovery_attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  audit_repair_required INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(document_id, financial_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_finans_islemleri_document ON finans_islemleri(document_id);
+CREATE INDEX IF NOT EXISTS idx_finans_islemleri_state ON finans_islemleri(state);
+CREATE TABLE IF NOT EXISTS finans_islem_olaylari (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  transaction_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  event TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  detail TEXT,
+  FOREIGN KEY(transaction_id) REFERENCES finans_islemleri(transaction_id)
+);
 CREATE TABLE IF NOT EXISTS banka_eslestirme_gecmisi (
   id INTEGER PRIMARY KEY AUTOINCREMENT, hareket_id TEXT NOT NULL, fis_id TEXT,
   eylem TEXT NOT NULL, skor INTEGER, aktor TEXT, zaman TEXT NOT NULL,
@@ -231,7 +263,7 @@ def _baglanti():
 def veritabanini_hazirla():
     with _baglanti() as con:
         con.executescript(SCHEMA)
-        con.execute("INSERT OR REPLACE INTO schema_meta VALUES('surum','2')")
+        con.execute("INSERT OR REPLACE INTO schema_meta VALUES('surum','3')")
         con.executemany("INSERT OR IGNORE INTO hesaplar(kod,ad,hesap_tipi) VALUES(?,?,?)", HESAP_PLANI)
         for key, firma in FIRMALAR.items():
             ad = firma.get("faaliyet") or firma.get("ad") or key
@@ -458,12 +490,30 @@ def finans_kaydi_kuyruga_al(hazir, onaylayan="sistem", hata=""):
 def senkron_kuyrugunu_isle():
     if not SYNC_QUEUE_PATH.exists():
         return {"islenen": 0, "kalan": 0}
+    # Eski JSONL kuyruğu korunur. Excel satırı zaten mevcutsa kayıt önce
+    # durable journal'a alınır ve recovery motoru doğrular; yalnız Excel'siz
+    # eski sentetik/manuel kuyruk kayıtları geriye uyumlu doğrudan SQLite
+    # posting yolunda kalır.
+    from finans_islem_journali import _excel_rows, _parse_list, prepare_transaction, recover_pending_transactions
+
     satirlar = [x for x in SYNC_QUEUE_PATH.read_text(encoding="utf-8").splitlines() if x.strip()]
     kalan, islenen = [], 0
     for satir in satirlar:
         try:
             kayit = json.loads(satir)
-            finans_kaydi_yaz(kayit["hazir"], kayit.get("onaylayan", "senkron"))
+            hazir = kayit["hazir"]
+            belge_id = str(hazir.get("belge_id") or "")
+            tx = prepare_transaction(hazir, kayit.get("onaylayan", "senkron"))
+            expected = _parse_list(tx.get("expected_excel_ids"))
+            if _excel_rows(belge_id, expected):
+                recover_pending_transactions()
+            else:
+                # Excel'e hiç yazılmamış eski kuyruk girdisi: mevcut geriye
+                # uyumlu davranışı koru; SQLite kendi transaction'ında rollbacklidir.
+                finans_kaydi_yaz(hazir, kayit.get("onaylayan", "senkron"))
+                from finans_islem_journali import _transition
+                _transition(tx["transaction_id"], "DB_POSTED")
+                _transition(tx["transaction_id"], "COMMITTED")
             islenen += 1
         except Exception:
             kalan.append(satir)

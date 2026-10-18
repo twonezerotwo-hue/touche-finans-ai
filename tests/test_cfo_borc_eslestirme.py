@@ -406,11 +406,12 @@ class ExcelKilitliVeriKaybiTestleri(AcikBorcTemeli):
         fis_once, ana_once = self.fis_sayisi(), hashlib.sha256(self.ana.read_bytes()).hexdigest()
         birak = wd._excel_gibi_kilitle(Path(self.ana))
         try:
-            with self.assertRaises(RuntimeError) as hata:
-                ui.onayla(token, AKTOR, "test-parola")
+            sonuc = ui.onayla(token, AKTOR, "test-parola")
         finally:
             birak()
-        mesaj = str(hata.exception)
+        self.assertFalse(sonuc["tamam"])
+        self.assertEqual(sonuc["status"], "PENDING_RECOVERY")
+        mesaj = str(sonuc["mesaj"])
         self.assertIn("Ana Excel dosyası açık veya OneDrive tarafından kilitli", mesaj)
         self.assertIn("aynı taslakta onaya tekrar basın", mesaj)
         self.assertIn("Kayıt yapılmadı", mesaj)
