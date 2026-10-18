@@ -15,11 +15,13 @@ import sqlite3
 import uuid
 from collections.abc import Callable
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 import config
 import finans_cekirdegi as cekirdek
+import guvenlik
 from guvenlik import audit_yaz
 from openpyxl import load_workbook
 
@@ -45,6 +47,32 @@ def _hash_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _canonical_value(name: str, value: Any) -> Any:
+    """Normalize workbook/JSON representations to one financial value."""
+    if value is None:
+        return ""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if name in {"Tarih", "Vade", "Vade_Tarihi"}:
+        text = str(value).strip()
+        for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%y"):
+            try:
+                return datetime.strptime(text, fmt).date().isoformat()  # noqa: DTZ007 - date-only value
+            except ValueError:
+                continue
+    if name in {"Tutar", "Tutar_TL", "Kur"}:
+        try:
+            text = str(value).strip().replace(" ", "")
+            if "," in text and "." in text:
+                text = text.replace(".", "").replace(",", ".")
+            elif "," in text:
+                text = text.replace(",", ".")
+            return format(Decimal(text).normalize(), "f")
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+    return str(value).strip()
+
+
 def _file_hash(path: Path) -> str | None:
     if not path.exists():
         return None
@@ -66,8 +94,33 @@ def _source_hash(hazir: dict) -> str:
 def _financial_hash(hazir: dict) -> str:
     records = []
     for record in hazir.get("veri", {}).get("kayitlar", []):
+        operation = str(record.get("Islem_Turu") or "")
+        operation = {
+            "Usta ödemesi": "Usta/Tedarikçi Ödemesi",
+            "Ortak cari ödemesi": "Ortak Cari Ödemesi",
+            "Banka masrafı": "Banka Masrafı",
+            "Diğer": "Gider Tahakkuku",
+        }.get(operation, operation)
+        # Excel deliberately derives display labels and descriptions. The hash
+        # therefore covers persisted financial semantics, not presentation text.
+        semantic = {
+            "Tarih": record.get("Tarih"),
+            "Faaliyet": record.get("Faaliyet") or hazir.get("firma_key"),
+            "Proje": record.get("Proje"),
+            "Cari": record.get("Cari") or record.get("Alici") or record.get("Tedarikci"),
+            "Islem_Turu": operation,
+            "Hesap_Kasa": record.get("Hesap_Kasa"),
+            "Tutar": record.get("Tutar") or record.get("Tutar_TL") or record.get("Toplam"),
+            "PB": str(record.get("PB") or "TL").upper(),
+            "Kur": record.get("Kur") or 1,
+            "Vade": record.get("Vade") or record.get("Vade_Tarihi"),
+            "Banka_Masrafi": record.get("Banka_Masrafi") or 0,
+        }
         records.append(
-            {str(k): v for k, v in record.items() if not str(k).startswith("_")}
+            {
+                str(k): _canonical_value(str(k), v)
+                for k, v in semantic.items()
+            }
         )
     canonical = {
         "firma_key": str(hazir.get("firma_key") or ""),
@@ -86,6 +139,20 @@ def _expected_ids(document_id: str, count: int) -> tuple[list[str], list[str]]:
 def _ledger() -> tuple[str, dict, int]:
     ledger = config.FIRMALAR["touche_holding"]["ana_ledger"]
     return ledger["sayfa"], ledger["sutunlar"], ledger["ilk_veri_satiri"]
+
+
+def _read_only_connection() -> sqlite3.Connection | None:
+    """Open the journal without creating files, WAL sidecars or parent folders."""
+    path = cekirdek.DB_PATH
+    if not path.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+    except sqlite3.Error:
+        return None
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys=ON")
+    return con
 
 
 def _cell_value(row: dict, name: str) -> Any:
@@ -178,15 +245,151 @@ def _row_fingerprint(rows: list[dict]) -> str:
     return _hash_bytes(_json(payload).encode("utf-8"))
 
 
-def _db_ids(document_id: str) -> list[str]:
-    with cekirdek._baglanti() as con:
+def _excel_financial_hash(tx: dict, rows: list[dict]) -> str:
+    """Return the approved financial hash represented by persisted Excel rows."""
+    if not rows:
+        return ""
+    return _financial_hash(_hazir_from_rows(tx, rows))
+
+
+def _expected_db_snapshot(hazir: dict) -> list[dict]:
+    """Build the exact SQLite content expected for the approved payload."""
+    taslaklar = cekirdek.fis_taslaklari(hazir)
+    return [
+        {
+            "fis_id": fis["fis_id"],
+            "belge_id": fis["belge_id"],
+            "kayit_sira": fis["sira"],
+            "faaliyet_key": fis["faaliyet"],
+            "tarih": fis["tarih"],
+            "vade": fis["vade"],
+            "proje": fis["proje"],
+            "cari": fis["cari"],
+            "aciklama": fis["aciklama"],
+            "para_birimi": fis["pb"],
+            "kur_mikro": fis["kur_mikro"],
+            "satirlar": [
+                {
+                    "satir_no": no,
+                    "hesap_kodu": line["hesap"],
+                    "borc_kurus": line["borc"],
+                    "alacak_kurus": line["alacak"],
+                    "aciklama": line["aciklama"],
+                }
+                for no, line in enumerate(fis["satirlar"], 1)
+            ],
+        }
+        for fis in taslaklar
+    ]
+
+
+def _snapshot_hash(snapshot: list[dict]) -> str:
+    # Descriptions are presentation metadata and may be normalized by the
+    # Excel writer. Amounts, currencies, accounts and debit/credit lines are
+    # the integrity-bearing SQLite content.
+    financial = []
+    for item in snapshot:
+        financial.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "fis_id", "belge_id", "kayit_sira", "faaliyet_key", "tarih",
+                    "vade", "proje", "cari", "para_birimi", "kur_mikro",
+                )
+            }
+            | {
+                "satirlar": [
+                    {
+                        key: line.get(key)
+                        for key in ("satir_no", "hesap_kodu", "borc_kurus", "alacak_kurus")
+                    }
+                    for line in item.get("satirlar", [])
+                ]
+            }
+        )
+    return _hash_bytes(_json(financial).encode("utf-8"))
+
+
+def _db_content_matches(tx: dict, hazir: dict, *, read_only: bool = False) -> bool:
+    expected_hash = str(tx.get("expected_db_fingerprint") or "")
+    actual = _db_snapshot(tx["document_id"], read_only=read_only)
+    if not actual:
+        return False
+    if expected_hash:
+        return _snapshot_hash(actual) == expected_hash
+    if read_only:
+        # A legacy journal without a persisted expected DB fingerprint cannot be
+        # proven safe without reconstructing schema state. Dry-run stays read-only.
+        return False
+    # Backward-compatible journal rows are verified against the approved payload
+    # even when they predate the persisted DB fingerprint column.
+    return _snapshot_hash(actual) == _snapshot_hash(_expected_db_snapshot(hazir))
+
+
+def _db_ids(document_id: str, *, read_only: bool = False) -> list[str]:
+    con = _read_only_connection() if read_only else None
+    if read_only and con is None:
+        return []
+    context = con if con is not None else cekirdek._baglanti()
+    if con is not None:
+        try:
+            return [
+                str(row[0])
+                for row in con.execute(
+                    "SELECT fis_id FROM fisler WHERE belge_id=? ORDER BY kayit_sira",
+                    (document_id,),
+                )
+            ]
+        finally:
+            con.close()
+    with context as connection:
         return [
             str(row[0])
-            for row in con.execute(
+            for row in connection.execute(
                 "SELECT fis_id FROM fisler WHERE belge_id=? ORDER BY kayit_sira",
                 (document_id,),
             )
         ]
+
+
+def _db_snapshot(document_id: str, *, read_only: bool = False) -> list[dict]:
+    con = _read_only_connection() if read_only else None
+    if read_only and con is None:
+        return []
+    context = con if con is not None else cekirdek._baglanti()
+    def read(connection):
+        fisler = connection.execute(
+            "SELECT fis_id,belge_id,kayit_sira,faaliyet_key,tarih,vade,proje,cari,"
+            "aciklama,para_birimi,kur_mikro FROM fisler WHERE belge_id=? ORDER BY kayit_sira",
+            (document_id,),
+        ).fetchall()
+        snapshot = []
+        for fis in fisler:
+            lines = connection.execute(
+                "SELECT satir_no,hesap_kodu,borc_kurus,alacak_kurus,aciklama "
+                "FROM fis_satirlari WHERE fis_id=? ORDER BY satir_no",
+                (fis["fis_id"],),
+            ).fetchall()
+            snapshot.append(
+                {
+                    key: fis[key]
+                    for key in (
+                        "fis_id", "belge_id", "kayit_sira", "faaliyet_key", "tarih",
+                        "vade", "proje", "cari", "aciklama", "para_birimi", "kur_mikro",
+                    )
+                }
+                | {
+                    "satirlar": [dict(line) for line in lines],
+                }
+            )
+        return snapshot
+    if con is not None:
+        try:
+            return read(con)
+        finally:
+            con.close()
+    with context as connection:
+        return read(connection)
 
 
 def _event(tx_id: str, state: str, event: str, detail: Any = None) -> None:
@@ -290,14 +493,15 @@ def prepare_transaction(hazir: dict, approval_identity: str) -> dict:
         + uuid.uuid5(uuid.NAMESPACE_URL, f"touche:{document_id}:{financial_hash}").hex
     )
     excel_ids, db_ids = _expected_ids(document_id, len(records))
+    expected_db_fingerprint = _snapshot_hash(_expected_db_snapshot(hazir))
     now = _now()
     workbook_before = _file_hash(config.ana_excel_yolu())
     try:
         with cekirdek._baglanti() as con:
             con.execute(
                 "INSERT INTO finans_islemleri(transaction_id,document_id,source_hash,financial_hash,approval_identity,"
-                "firma_key,belge_turu,state,created_at,updated_at,expected_excel_ids,expected_db_ids,workbook_hash_before) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "firma_key,belge_turu,state,created_at,updated_at,expected_excel_ids,expected_db_ids,"
+                "expected_db_fingerprint,workbook_hash_before) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     tx_id,
                     document_id,
@@ -311,6 +515,7 @@ def prepare_transaction(hazir: dict, approval_identity: str) -> dict:
                     now,
                     _json(excel_ids),
                     _json(db_ids),
+                    expected_db_fingerprint,
                     workbook_before,
                 ),
             )
@@ -324,17 +529,33 @@ def prepare_transaction(hazir: dict, approval_identity: str) -> dict:
         "transaction_id": tx_id,
         "document_id": document_id,
         "financial_hash": financial_hash,
+        "source_hash": _source_hash(hazir),
+        "firma_key": str(hazir.get("firma_key") or ""),
+        "belge_turu": str(hazir.get("tur") or ""),
         "state": "PREPARED",
         "expected_excel_ids": _json(excel_ids),
         "expected_db_ids": _json(db_ids),
+        "expected_db_fingerprint": expected_db_fingerprint,
     }
 
 
-def _load_tx(tx_id: str) -> dict:
-    with cekirdek._baglanti() as con:
-        row = con.execute(
-            "SELECT * FROM finans_islemleri WHERE transaction_id=?", (tx_id,)
-        ).fetchone()
+def _load_tx(tx_id: str, *, read_only: bool = False) -> dict:
+    con = _read_only_connection() if read_only else None
+    if read_only and con is None:
+        raise ValueError("İşlem günlüğü mevcut değil.")
+    context = con if con is not None else cekirdek._baglanti()
+    if con is not None:
+        try:
+            row = con.execute(
+                "SELECT * FROM finans_islemleri WHERE transaction_id=?", (tx_id,)
+            ).fetchone()
+        finally:
+            con.close()
+    else:
+        with context as connection:
+            row = connection.execute(
+                "SELECT * FROM finans_islemleri WHERE transaction_id=?", (tx_id,)
+            ).fetchone()
     if not row:
         raise ValueError(f"İşlem günlüğünde bulunamadı: {tx_id}")
     return dict(row)
@@ -393,9 +614,9 @@ def _hazir_from_rows(tx: dict, rows: list[dict]) -> dict:
     return {
         "basari": True,
         "belge_id": tx["document_id"],
-        "belge_hash": tx["source_hash"],
-        "firma_key": tx["firma_key"],
-        "tur": tx["belge_turu"],
+        "belge_hash": tx.get("source_hash") or "",
+        "firma_key": tx.get("firma_key") or "",
+        "tur": tx.get("belge_turu") or "",
         "veri": {"kayitlar": records},
         "dogrulama": {"durum": "PASS", "skor": 100},
         "gecici_dosyalar": [],
@@ -415,6 +636,29 @@ def execute_transaction(
     tx_id = tx["transaction_id"]
     state = tx.get("state", "PREPARED")
     if state == "COMMITTED":
+        expected_excel = _parse_list(tx.get("expected_excel_ids"))
+        rows = _excel_rows(tx["document_id"], expected_excel)
+        valid = set(expected_excel).issubset(
+            {str(row.get("Kaynak_Belge_ID")) for row in rows}
+        ) and _excel_financial_hash(tx, rows) == tx.get("financial_hash")
+        try:
+            valid = valid and _db_content_matches(tx, hazir)
+        except (KeyError, OSError, RuntimeError, sqlite3.Error, TypeError, ValueError):
+            valid = False
+        if not valid:
+            _transition(
+                tx_id,
+                "NEEDS_REVIEW",
+                error="Tamamlanmış işlemin Excel/SQLite finansal içeriği değişmiş.",
+            )
+            return {
+                "basari": False,
+                "committed": False,
+                "status": "NEEDS_REVIEW",
+                "recovery_required": True,
+                "transaction_id": tx_id,
+                "hata": "Tamamlanmış işlem kanıtı değişmiş; otomatik tekrar yapılmadı.",
+            }
         return {
             "basari": True,
             "committed": True,
@@ -502,6 +746,20 @@ def execute_transaction(
             found = {str(row.get("Kaynak_Belge_ID")) for row in rows}
             if not set(expected_excel).issubset(found):
                 raise RuntimeError("Beklenen Excel satır kimlikleri doğrulanamadı.")
+            if _excel_financial_hash(tx, rows) != tx["financial_hash"]:
+                _transition(
+                    tx_id,
+                    "NEEDS_REVIEW",
+                    error="Excel finansal içeriği onaylanan parmak iziyle uyuşmuyor.",
+                )
+                return {
+                    "basari": False,
+                    "committed": False,
+                    "status": "NEEDS_REVIEW",
+                    "recovery_required": True,
+                    "transaction_id": tx_id,
+                    "hata": "Excel içeriği değiştirilmiş; otomatik kayıt yapılmadı.",
+                }
             fingerprint = _row_fingerprint(rows)
             _transition(
                 tx_id,
@@ -544,6 +802,36 @@ def execute_transaction(
         existing_db = _db_ids(tx["document_id"])
         if not set(expected_db).issubset(existing_db):
             raise RuntimeError("Beklenen SQLite fiş kimlikleri doğrulanamadı.")
+        try:
+            db_content_ok = _db_content_matches(tx, hazir)
+        except Exception as exc:  # noqa: BLE001 - database proof fails closed
+            _transition(
+                tx_id,
+                "NEEDS_REVIEW",
+                error=f"SQLite fiş içeriği doğrulanamadı: {exc}",
+            )
+            return {
+                "basari": False,
+                "committed": False,
+                "status": "NEEDS_REVIEW",
+                "recovery_required": True,
+                "transaction_id": tx_id,
+                "hata": "SQLite içeriği doğrulanamadı; otomatik işlem yapılmadı.",
+            }
+        if not db_content_ok:
+            _transition(
+                tx_id,
+                "NEEDS_REVIEW",
+                error="SQLite fiş içeriği onaylanan tutar/hesap parmak iziyle uyuşmuyor.",
+            )
+            return {
+                "basari": False,
+                "committed": False,
+                "status": "NEEDS_REVIEW",
+                "recovery_required": True,
+                "transaction_id": tx_id,
+                "hata": "SQLite içeriği değiştirilmiş; otomatik işlem yapılmadı.",
+            }
         _transition(tx_id, "DB_POSTED")
         _transition(tx_id, "COMMITTED")
         return {
@@ -581,6 +869,12 @@ def execute_transaction(
 def _recover_one(tx: dict, dry_run: bool = False) -> dict:
     tx_id = tx["transaction_id"]
     try:
+        if tx.get("state") == "NEEDS_REVIEW":
+            return {
+                "transaction_id": tx_id,
+                "status": "NEEDS_REVIEW",
+                "action": "Manual yönetici kararı bekleniyor; otomatik kurtarma yapılmadı.",
+            }
         if not dry_run:
             _event(
                 tx_id,
@@ -594,7 +888,7 @@ def _recover_one(tx: dict, dry_run: bool = False) -> dict:
         expected_db = _parse_list(tx.get("expected_db_ids"))
         rows = _excel_rows(tx["document_id"], expected_excel)
         found = {str(row.get("Kaynak_Belge_ID")) for row in rows}
-        db_ids = _db_ids(tx["document_id"])
+        db_ids = _db_ids(tx["document_id"], read_only=dry_run)
         if (
             tx.get("expected_excel_fingerprint")
             and set(expected_excel).issubset(found)
@@ -608,8 +902,38 @@ def _recover_one(tx: dict, dry_run: bool = False) -> dict:
                 "status": "NEEDS_REVIEW",
                 "action": action,
             }
+        if set(expected_excel).issubset(found):
+            excel_hash = _excel_financial_hash(tx, rows)
+            if excel_hash != tx.get("financial_hash"):
+                action = "NEEDS_REVIEW: Excel finansal içeriği onaylanan hash ile uyuşmuyor"
+                if not dry_run:
+                    _transition(tx_id, "NEEDS_REVIEW", error=action)
+                return {
+                    "transaction_id": tx_id,
+                    "status": "NEEDS_REVIEW",
+                    "action": action,
+                }
+
         if set(expected_excel).issubset(found) and set(expected_db).issubset(db_ids):
-            action = "COMMITTED: Excel ve SQLite kimlikleri doğrulandı"
+            try:
+                hazir = _hazir_from_rows(tx, rows)
+                db_match = _db_content_matches(tx, hazir, read_only=dry_run)
+            except Exception as exc:  # noqa: BLE001 - integrity proof fails closed
+                db_match = False
+                action = f"NEEDS_REVIEW: SQLite içeriği doğrulanamadı ({exc})"
+            if not db_match:
+                action = locals().get(
+                    "action",
+                    "NEEDS_REVIEW: SQLite fiş içeriği onaylanan içerikle uyuşmuyor",
+                )
+                if not dry_run:
+                    _transition(tx_id, "NEEDS_REVIEW", error=action)
+                return {
+                    "transaction_id": tx_id,
+                    "status": "NEEDS_REVIEW",
+                    "action": action,
+                }
+            action = "COMMITTED: Excel ve SQLite içerikleri doğrulandı"
             if not dry_run and tx["state"] != "COMMITTED":
                 _transition(tx_id, "DB_POSTED")
                 _transition(tx_id, "COMMITTED")
@@ -639,6 +963,8 @@ def _recover_one(tx: dict, dry_run: bool = False) -> dict:
                 )
                 if not set(expected_db).issubset(_db_ids(tx["document_id"])):
                     raise RuntimeError("Kurtarma sonrası SQLite fişleri doğrulanamadı.")
+                if not _db_content_matches(tx, hazir):
+                    raise RuntimeError("Kurtarma sonrası SQLite içeriği doğrulanamadı.")
                 _transition(tx_id, "DB_POSTED")
                 _transition(tx_id, "COMMITTED")
                 _event(
@@ -683,16 +1009,49 @@ def _recover_one(tx: dict, dry_run: bool = False) -> dict:
         return {"transaction_id": tx_id, "status": "NEEDS_REVIEW", "action": action}
 
 
-def recover_pending_transactions(*, dry_run: bool = False) -> dict:
-    """Terminal olmayan işlemleri güvenli ve tekrarlanabilir şekilde tarar."""
-    cekirdek.veritabanini_hazirla()
+def _journal_rows(*, read_only: bool = False) -> list[dict]:
+    if read_only:
+        con = _read_only_connection()
+        if con is None:
+            return []
+        try:
+            return [
+                dict(row)
+                for row in con.execute(
+                    "SELECT * FROM finans_islemleri "
+                    "WHERE state NOT IN ('COMMITTED','ABORTED') ORDER BY created_at"
+                )
+            ]
+        finally:
+            con.close()
     with cekirdek._baglanti() as con:
-        rows = [
+        return [
             dict(row)
             for row in con.execute(
-                "SELECT * FROM finans_islemleri WHERE state NOT IN ('COMMITTED','ABORTED') ORDER BY created_at"
+                "SELECT * FROM finans_islemleri "
+                "WHERE state NOT IN ('COMMITTED','ABORTED') ORDER BY created_at"
             )
         ]
+
+
+def recover_pending_transactions(*, dry_run: bool = False) -> dict:
+    """Terminal olmayan işlemleri güvenli ve tekrarlanabilir şekilde tarar."""
+    if not dry_run:
+        cekirdek.veritabanini_hazirla()
+    try:
+        rows = _journal_rows(read_only=dry_run)
+    except sqlite3.Error as exc:
+        if not dry_run:
+            raise
+        return {
+            "dry_run": True,
+            "islem_sayisi": 0,
+            "sonuclar": [],
+            "needs_review": 1,
+            "committed": 0,
+            "pending_recovery": 0,
+            "hata": f"Journal salt okunur olarak doğrulanamadı: {exc}",
+        }
     results = [_recover_one(row, dry_run=dry_run) for row in rows]
     return {
         "dry_run": dry_run,
@@ -700,8 +1059,61 @@ def recover_pending_transactions(*, dry_run: bool = False) -> dict:
         "sonuclar": results,
         "needs_review": sum(x["status"] == "NEEDS_REVIEW" for x in results),
         "committed": sum(x["status"] == "COMMITTED" for x in results),
+        "pending_recovery": sum(x["status"] == "PENDING_RECOVERY" for x in results),
     }
 
 
 def recovery_dry_run() -> dict:
     return recover_pending_transactions(dry_run=True)
+
+
+def authorize_needs_review(tx_id: str, admin_identity: str, reason: str) -> dict:
+    """Require an explicit, audited decision before retrying NEEDS_REVIEW."""
+    if not str(admin_identity).strip() or not str(reason).strip():
+        raise ValueError("Yönetici kimliği ve karar gerekçesi zorunludur.")
+    tx = _load_tx(tx_id)
+    if tx["state"] != "NEEDS_REVIEW":
+        raise ValueError("Yalnızca NEEDS_REVIEW işlemleri manuel kurtarmaya açılabilir.")
+    _event(
+        tx_id,
+        "NEEDS_REVIEW",
+        "transaction_admin_recovery_approved",
+        {"admin_identity": str(admin_identity), "reason": str(reason)[:500]},
+    )
+    _transition(tx_id, "PENDING_RECOVERY", error=f"Manuel yönetici kararı: {reason}")
+    return _recover_one(_load_tx(tx_id))
+
+
+def repair_audit(tx_id: str) -> dict:
+    """Repair missing audit evidence without reposting any financial entry."""
+    tx = _load_tx(tx_id)
+    if tx["state"] != "COMMITTED":
+        raise ValueError("Audit onarımı yalnızca COMMITTED işlem için yapılabilir.")
+    if not int(tx.get("audit_repair_required") or 0):
+        return {"transaction_id": tx_id, "repaired": False, "reason": "gerekmiyor"}
+    audit_path = Path(guvenlik.AUDIT_LOG)
+    before = _file_hash(audit_path)
+    try:
+        audit_yaz(
+            "transaction_audit_repaired",
+            transaction_id=tx_id,
+            status="COMMITTED",
+            detail={"repair": True},
+        )
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"Audit onarımı başarısız: {exc}") from exc
+    after = _file_hash(audit_path)
+    if before == after:
+        raise RuntimeError("Audit kaydı yazılmadı; onarım bayrağı korunuyor.")
+    with cekirdek._baglanti() as con:
+        con.execute(
+            "UPDATE finans_islemleri SET audit_repair_required=0,last_error=NULL,updated_at=? "
+            "WHERE transaction_id=?",
+            (_now(), tx_id),
+        )
+        con.execute(
+            "INSERT INTO finans_islem_olaylari(transaction_id,state,event,created_at,detail) "
+            "VALUES(?,?,?,?,?)",
+            (tx_id, "COMMITTED", "transaction_audit_repaired", _now(), _json({"repair": True})),
+        )
+    return {"transaction_id": tx_id, "repaired": True, "financial_posting_unchanged": True}

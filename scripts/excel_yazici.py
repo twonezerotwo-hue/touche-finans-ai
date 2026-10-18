@@ -535,14 +535,21 @@ def _yaz_gursar_holding(wb, firma, veri, belge_id):
         satir = boslar[ofset]
         islem_turu = "Banka Masrafı" if banka_masrafi else {
             "Usta ödemesi": "Usta/Tedarikçi Ödemesi",
+            "Usta/Tedarikçi Ödemesi": "Usta/Tedarikçi Ödemesi",
             "Ortak cari ödemesi": "Ortak Cari Ödemesi",
+            "Ortak Cari Ödemesi": "Ortak Cari Ödemesi",
             "Banka masrafı": "Banka Masrafı",
+            "Banka Masrafı": "Banka Masrafı",
             "Diğer": "Gider Tahakkuku",
+            "Gider Tahakkuku": "Gider Tahakkuku",
         }.get(kayit.get("Islem_Turu"), "Gider Tahakkuku")
         cari_tipi = "Banka" if banka_masrafi else {
             "Usta ödemesi": "Usta",
+            "Usta/Tedarikçi Ödemesi": "Usta",
             "Ortak cari ödemesi": "Ortak",
+            "Ortak Cari Ödemesi": "Ortak",
             "Banka masrafı": "Banka",
+            "Banka Masrafı": "Banka",
             "Diğer": "Diğer",
         }.get(kayit.get("Islem_Turu"), kayit.get("Cari_Tipi") or "Diğer")
         kayit_id = _kayit_id("AI-GUR", kaynak_id)

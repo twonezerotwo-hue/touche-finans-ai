@@ -367,7 +367,7 @@ class FinanceConsistencyContracts(CfoTestTemeli):
         hazir = self.belge("B03-DB-COMMIT-CRASH", tutar=24_000)
 
         def commit_then_crash(data, actor):
-            result = cekirdek.finans_kaydi_yaz(data, actor)
+            cekirdek.finans_kaydi_yaz(data, actor)
             raise RuntimeError("synthetic crash after SQLite commit")
 
         result = journal.execute_transaction(
@@ -453,4 +453,120 @@ class FinanceConsistencyContracts(CfoTestTemeli):
         report = journal.recover_pending_transactions()
         assert report["committed"] == 0
         assert self._journal_state("B10-PREPARED-RESTART") == "ABORTED"
+
+    def test_b11_excel_fingerprint_persist_edilmeden_cokme_guvenli_kurtarilir(self):
+        """PREPARED + tam Excel satırı, hash doğrulanmadan SQLite'a yazılamaz."""
+        hazir = self.belge("B11-FINGERPRINT-BEFORE", tutar=28_000)
+        journal.prepare_transaction(hazir, "test")
+        excel_yazici.yaz(
+            hazir["firma_key"], hazir["veri"], hazir["belge_id"], aktor="test"
+        )
+        report = journal.recover_pending_transactions()
+        assert report["committed"] == 1
+        assert self._journal_state("B11-FINGERPRINT-BEFORE") == "COMMITTED"
+
+    def test_b12_restart_oncesi_excel_tutari_degiserse_needs_review(self):
+        self._pending_transaction("B12-EXCEL-AMOUNT-CHANGE")
+        from openpyxl import load_workbook
+
+        wb = load_workbook(self.ana)
+        try:
+            ws = wb["03_Kayıt Merkezi"]
+            for row in range(6, 300):
+                if str(ws[f"Z{row}"].value or "").startswith("B12-EXCEL-AMOUNT-CHANGE-"):
+                    ws[f"I{row}"] = 99_999
+                    break
+            wb.save(self.ana)
+        finally:
+            wb.close()
+        report = journal.recover_pending_transactions()
+        assert report["needs_review"] == 1
+        assert self._journal_state("B12-EXCEL-AMOUNT-CHANGE") == "NEEDS_REVIEW"
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B12-EXCEL-AMOUNT-CHANGE",)
+        ) == 0
+
+    def test_b13_sqlite_tutari_degiserse_ayni_voucher_id_yeterli_degil(self):
+        hazir = self.belge("B13-SQLITE-AMOUNT-CHANGE", tutar=29_000)
+
+        def commit_then_crash(data, actor):
+            cekirdek.finans_kaydi_yaz(data, actor)
+            raise RuntimeError("synthetic crash after SQLite commit")
+
+        result = journal.execute_transaction(
+            hazir, "test", excel_writer=excel_yazici.yaz, db_writer=commit_then_crash
+        )
+        assert result["status"] == "PENDING_RECOVERY"
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE fis_satirlari SET borc_kurus=borc_kurus+1 "
+                "WHERE fis_id=? AND satir_no=1",
+                ("JRN-B13-SQLITE-AMOUNT-CHANGE-001",),
+            )
+        report = journal.recover_pending_transactions()
+        assert report["needs_review"] == 1
+        assert self._journal_state("B13-SQLITE-AMOUNT-CHANGE") == "NEEDS_REVIEW"
+
+    def test_b14_needs_review_baslangicta_asla_otomatik_post_etmez(self):
+        self._pending_transaction("B14-REVIEW-NO-REPOST")
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE finans_islemleri SET expected_excel_fingerprint=? WHERE document_id=?",
+                ("bad-fingerprint", "B14-REVIEW-NO-REPOST"),
+            )
+        first = journal.recover_pending_transactions()
+        second = journal.recover_pending_transactions()
+        assert first["needs_review"] == second["needs_review"] == 1
+        assert self._journal_state("B14-REVIEW-NO-REPOST") == "NEEDS_REVIEW"
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B14-REVIEW-NO-REPOST",)
+        ) == 0
+
+    def test_b15_dry_run_db_ve_dosyalari_byte_byte_ayni_kalir(self):
+        self._pending_transaction("B15-DRY-RUN-BYTES")
+        paths = [self.ana, self.yedek, self.root / "finans.db", self.audit]
+        before = {str(path): path.read_bytes() if path.exists() else None for path in paths}
+        journal.recovery_dry_run()
+        after = {str(path): path.read_bytes() if path.exists() else None for path in paths}
+        assert after == before
+
+    def test_b16_audit_onarimi_finansal_postingi_tekrarlamaz(self):
+        hazir = self.belge("B16-AUDIT-REPAIR", tutar=30_000)
+        with patch.object(journal, "audit_yaz", side_effect=OSError("audit unavailable")):
+            result = journal.execute_transaction(hazir, "test", excel_writer=excel_yazici.yaz)
+        assert result["status"] == "COMMITTED"
+        tx_id = result["transaction_id"]
+        before_count = self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B16-AUDIT-REPAIR",)
+        )
+        repaired = journal.repair_audit(tx_id)
+        assert repaired["repaired"] is True
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("B16-AUDIT-REPAIR",)
+        ) == before_count
+        assert self.db_scalar(
+            "SELECT audit_repair_required FROM finans_islemleri WHERE transaction_id=?", (tx_id,)
+        ) == 0
+        assert journal.repair_audit(tx_id)["repaired"] is False
+
+    def test_b17_es_zamanli_farkli_icerikli_prepare_belge_kimligi_cakisir(self):
+        def prepare(amount):
+            try:
+                return journal.prepare_transaction(
+                    self.belge("B17-CONCURRENT-DOCUMENT", tutar=amount), "test"
+                )
+            except Exception as exc:  # noqa: BLE001 - conflict is the assertion
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(prepare, (31_000, 32_000)))
+        successes = [item for item in results if isinstance(item, dict)]
+        failures = [item for item in results if isinstance(item, Exception)]
+        assert len(successes) == 1
+        assert len(failures) == 1
+        assert isinstance(failures[0], ValueError)
+        assert self.db_scalar(
+            "SELECT COUNT(*) FROM finans_islemleri WHERE document_id=?",
+            ("B17-CONCURRENT-DOCUMENT",),
+        ) == 1
 

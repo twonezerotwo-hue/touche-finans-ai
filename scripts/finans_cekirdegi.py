@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS finans_islemleri (
   expected_excel_ids TEXT NOT NULL DEFAULT '[]',
   expected_excel_fingerprint TEXT,
   expected_db_ids TEXT NOT NULL DEFAULT '[]',
+  expected_db_fingerprint TEXT,
   workbook_hash_before TEXT,
   workbook_hash_after TEXT,
   recovery_attempts INTEGER NOT NULL DEFAULT 0,
@@ -160,6 +161,8 @@ CREATE TABLE IF NOT EXISTS finans_islemleri (
   audit_repair_required INTEGER NOT NULL DEFAULT 0,
   UNIQUE(document_id, financial_hash)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS ux_finans_islemleri_document
+  ON finans_islemleri(document_id);
 CREATE INDEX IF NOT EXISTS idx_finans_islemleri_document ON finans_islemleri(document_id);
 CREATE INDEX IF NOT EXISTS idx_finans_islemleri_state ON finans_islemleri(state);
 CREATE TABLE IF NOT EXISTS finans_islem_olaylari (
@@ -263,7 +266,20 @@ def _baglanti():
 def veritabanini_hazirla():
     with _baglanti() as con:
         con.executescript(SCHEMA)
-        con.execute("INSERT OR REPLACE INTO schema_meta VALUES('surum','3')")
+        journal_columns = {
+            row[1] for row in con.execute("PRAGMA table_info(finans_islemleri)").fetchall()
+        }
+        if "expected_db_fingerprint" not in journal_columns:
+            con.execute(
+                "ALTER TABLE finans_islemleri ADD COLUMN expected_db_fingerprint TEXT"
+            )
+        # The pair index from PR-03 is intentionally retained for compatibility,
+        # but document identity itself must remain unique under concurrent prepares.
+        con.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_finans_islemleri_document "
+            "ON finans_islemleri(document_id)"
+        )
+        con.execute("INSERT OR REPLACE INTO schema_meta VALUES('surum','4')")
         con.executemany("INSERT OR IGNORE INTO hesaplar(kod,ad,hesap_tipi) VALUES(?,?,?)", HESAP_PLANI)
         for key, firma in FIRMALAR.items():
             ad = firma.get("faaliyet") or firma.get("ad") or key

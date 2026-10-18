@@ -66,6 +66,14 @@ from ticari import alacaklar, borclar, yaklasan_odemeler  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("finans_asistani")
 
+RECOVERY_HEALTH = {
+    "durum": "not_run",
+    "islem_sayisi": 0,
+    "needs_review": 0,
+    "pending_recovery": 0,
+    "hata": None,
+}
+
 
 def _ekran_kpi(faaliyet, profil):
     """Tüm ekranlarda karar panosunun tek likidite/ödeme hesabını kullanır."""
@@ -273,7 +281,11 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(yol.read_bytes())
             return
         if parsed.path == "/api/health":
-            return self._json({"durum": "ok", "yerel": True})
+            return self._json({
+                "durum": "ok" if RECOVERY_HEALTH["durum"] == "ok" else "degraded",
+                "yerel": True,
+                "recovery": dict(RECOVERY_HEALTH),
+            })
         if parsed.path == "/api/session":
             return self._json(self._oturum())
         session = self._yetki_gerekli()
@@ -816,6 +828,7 @@ def baslangic_ozeti(host="127.0.0.1", port=8765) -> list[str]:
 
 
 def calistir(host="127.0.0.1", port=None):
+    global RECOVERY_HEALTH
     port = int(port or os.environ.get("FINANS_UI_PORT", "8765"))
     # Uygulama yeniden başlarken yalnız kalıcı journal kanıtı olan işlemleri
     # tarar; belirsiz workbook/DB ayrışmalarını otomatik yazmadan NEEDS_REVIEW'e
@@ -824,12 +837,30 @@ def calistir(host="127.0.0.1", port=None):
         from finans_islem_journali import recover_pending_transactions
 
         recovery = recover_pending_transactions()
+        RECOVERY_HEALTH = {
+            "durum": (
+                "degraded"
+                if recovery.get("needs_review") or recovery.get("pending_recovery")
+                else "ok"
+            ),
+            "islem_sayisi": recovery.get("islem_sayisi", 0),
+            "needs_review": recovery.get("needs_review", 0),
+            "pending_recovery": recovery.get("pending_recovery", 0),
+            "hata": None,
+        }
         log.info(
             "Finans recovery taraması: %s işlem, %s tamamlandı, %s inceleme",
             recovery.get("islem_sayisi", 0), recovery.get("committed", 0),
             recovery.get("needs_review", 0),
         )
     except Exception as exc:  # noqa: BLE001 - recovery başlatmayı durdurmamalı
+        RECOVERY_HEALTH = {
+            "durum": "degraded",
+            "islem_sayisi": 0,
+            "needs_review": 0,
+            "pending_recovery": 0,
+            "hata": f"{type(exc).__name__}: {exc}",
+        }
         log.error("Finans recovery taraması başlatılamadı: %s", exc)
     sunucu = ThreadingHTTPServer((host, port), Handler)
     for satir in baslangic_ozeti(host, port):
