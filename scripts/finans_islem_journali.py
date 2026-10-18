@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import threading
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
@@ -32,6 +33,7 @@ TERMINAL_STATES = {"COMMITTED", "ABORTED"}
 RECOVERABLE_STATES = {"PREPARED", "EXCEL_WRITTEN", "DB_POSTED", "PENDING_RECOVERY"}
 REVIEW_STATES = {"NEEDS_REVIEW"}
 ALL_STATES = TERMINAL_STATES | RECOVERABLE_STATES | REVIEW_STATES
+_RECOVERY_LOCK = threading.RLock()
 
 
 def _now() -> str:
@@ -1053,7 +1055,11 @@ def recover_pending_transactions(*, dry_run: bool = False) -> dict:
             "pending_recovery": 0,
             "hata": f"Journal salt okunur olarak doğrulanamadı: {exc}",
         }
-    results = [_recover_one(row, dry_run=dry_run) for row in rows]
+    # Recovery is serialized inside a process so two approval/restart workers
+    # cannot both observe a missing SQLite posting and race to create it.
+    with _RECOVERY_LOCK:
+        rows = _journal_rows(read_only=dry_run)
+        results = [_recover_one(row, dry_run=dry_run) for row in rows]
     return {
         "dry_run": dry_run,
         "islem_sayisi": len(results),
