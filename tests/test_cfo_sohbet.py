@@ -104,6 +104,11 @@ class DogalDilCozumlemeTestleri(CfoTestTemeli):
         self.assertEqual(y["cfo"]["soru"]["alan"], "hesap")
         self.assertIn("Hangi hesap", y["cevap"])
         self.assertNotIn("Toplam ödeme", y["cevap"])
+        y = self.sec(y, "hesap", "Gürsar TL Banka")
+        self.assertIsNotNone(y["kayit_taslagi"], y["cevap"])
+        self.assertEqual(y["kayit_taslagi"]["kayitlar"][0]["islem"], "Kredi Taksit Ödemesi")
+        self.assertEqual(y["kayit_taslagi"]["kayitlar"][0]["proje"], "")
+        self.assertEqual(self.ledger(), [])
 
     def test_desteklenmeyen_islemler_aciklanir(self):
         n = self.niyet("Gürsar'dan Holding'e 100 bin TL grup içi transfer yaz")

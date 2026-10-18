@@ -282,7 +282,10 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
         kayit = _normalize_kayit(ham, beklenen)
         _kanonik_alanlari_tamamla(kayit, firma_key, tur)
         normalize_edilen.append(kayit)
+        kredi_taksiti = _norm(kayit.get('Islem_Turu')) == _norm('Kredi Taksit Ödemesi')
         for alan in beklenen:
+            if kredi_taksiti and alan == 'Proje' and kayit.get(alan) in (None, ''):
+                continue
             if kayit.get(alan) in (None, "", "None"):
                 uyarilar.append(f"Kayit {sira}: eksik alan -> {alan}")
         tarih = kayit.get("Tarih") or kayit.get("Vade_Tarihi") or kayit.get("Imza_Tarihi")
@@ -314,7 +317,12 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
         if md is None:
             hatalar.append('Faaliyet master verisi okunamadı; kayıt durduruldu.')
         for kayit in normalize_edilen:
+            kredi_taksiti = _norm(kayit.get('Islem_Turu')) == _norm('Kredi Taksit Ödemesi')
             for alan in beklenen:
+                # Banka kredi taksiti faaliyet seviyesinde tutulabilir; proje kodu
+                # 04_Kredi & Vade planından gelir ve 03_Kayıt Merkezi'nde boş kalabilir.
+                if kredi_taksiti and alan == 'Proje' and kayit.get(alan) in (None, ''):
+                    continue
                 if kayit.get(alan) in (None, ''):
                     hatalar.append(f'Eksik zorunlu alan: {alan}')
             if not _tarih_gecerli(kayit.get('Tarih')):
@@ -329,6 +337,8 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
             if md:
                 master_alanlari = [('Faaliyet','faaliyetler'),('Proje','projeler'),
                                    ('Islem_Turu','islem_turleri'),('Cari_Tipi','cari_tipler')]
+                if kredi_taksiti and not kayit.get('Proje'):
+                    master_alanlari = [x for x in master_alanlari if x[0] != 'Proje']
                 yeni_cari = sohbet_kaydi and bool(kayit.get('_yeni_cari'))
                 nakit_islemi = any(x in _norm(kayit.get('Islem_Turu')) for x in (
                     'tahsilat', 'odemesi', 'banka masraf', 'kredi kullanimi',
@@ -354,8 +364,6 @@ def deterministik_dogrula(veri, firma_key, tur, md=None):
                     hatalar.append('Cari ve cari tipi eşleşmiyor.')
             if kayit.get('PB') not in ('TL','USD','EUR'):
                 hatalar.append('Desteklenmeyen para birimi.')
-            if kayit.get('Islem_Turu') == 'Kredi Taksit Ödemesi':
-                hatalar.append('Kredi taksiti için faiz/anapara planı entegrasyonu gerekli; bu akışta henüz desteklenmiyor.')
     hatalar = list(dict.fromkeys(hatalar))
     uyarilar = list(dict.fromkeys(uyarilar))
     skor = max(0, 100 - len(hatalar) * 40 - len(uyarilar) * 8)
