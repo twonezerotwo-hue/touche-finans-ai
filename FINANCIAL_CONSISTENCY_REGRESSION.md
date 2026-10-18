@@ -148,16 +148,20 @@ kimlik bilgileri erişilmemiştir. Merge/deploy yapılmayacaktır.
 
 ## CI doğrulaması
 
-Önceki PR-02 koşusu **39127326028** (commit `e5c7f8c`) başarılıydı:
+Final PR-02 koşusu **39134586213** (commit `82e3bdc2cfa0aca07ef2677a10bff8abd4ac1a34`) başarılıdır:
 
-- Ubuntu: test job başarılı; izole suite, Ruff baseline ve incremental mypy
-  adımları başarılı.
-- Windows: test job başarılı; izole suite, Ruff baseline ve incremental mypy
-  adımları başarılı.
+- Ubuntu: **425 passed, 3 skipped, 2 xfailed, 352 subtests passed**.
+  Skip'ler: `tests/test_acceptance.py:300` üretim DB kopyası ortam değişkeni
+  eksik; `tests/test_cfo_borc_eslestirme.py:400` Windows'a özgü Excel paylaşım
+  kilidi; `tests/test_phase1.py:230` Poppler/pdftoppm yok.
+- Windows: **426 passed, 2 skipped, 2 xfailed, 352 subtests passed**.
+  Skip'ler: `tests/test_acceptance.py:300` üretim DB kopyası ortam değişkeni
+  eksik; `tests/test_phase1.py:230` Poppler/pdftoppm yok.
+- Her iki platformda Ruff baseline ve incremental mypy baseline adımları
+  mevcut PR-01 politikasıyla raporlandı; uygulama kodu bu PR'da değiştirilmedi.
 - Dependency audit: başarılı; bilinen zafiyetlerde job başarısız olur,
   desteklenmeyen VCS `excel-parser` ayrı raporlanır.
 - Secret/production-path scan: başarılı.
 
-CI koşusu tam test sayılarını ayrıca platform logunda raporlar; yeni commit için
-koşu numarası ve Ubuntu/Windows skip listesi final rapora eklenecektir. CI'da
-üretim Excel/SQLite erişimi açılmamıştır.
+CI'da üretim Excel/SQLite erişimi açılmamıştır. Run bağlantısı:
+`https://github.com/twonezerotwo-hue/touche-finans-ai/actions/runs/39134586213`.
