@@ -1,7 +1,7 @@
 # TESTING
 
 ```bash
-pip install -r requirements.txt          # + optional: pip install playwright   (browser tests)
+pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest -q                      # whole suite (~40 s)
 ruff check scripts tests --select F,E9   # lint used in this repo
 python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_defter_mutabakati.py \
@@ -13,6 +13,14 @@ Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests`
 
 Result at the time of writing: **408+ passed, 2 skipped** (a skip needs a copy of a production DB, see below).
 Baseline on the original commit: 6 modules failed at import; with that worked around, 126 passed / 21 failed.
+
+## PR-01 CI baseline
+
+GitHub Actions runs the isolated suite on Python 3.12 under Ubuntu and Windows, then attempts Chromium browser tests when
+the runner can provide a browser. Ruff and mypy are intentionally reported as non-blocking baseline diagnostics in PR-01;
+the existing tree has known debt (recorded in the audit) and application logic is not rewritten just to hide it. Later PRs
+will ratchet these checks to blocking gates module by module. The dependency audit and production-path/secret scan also run
+on every push and pull request. CI always redirects `TOUCHE_*` paths to `.ci-runtime` and never receives production files.
 
 ## Production data is never touched
 

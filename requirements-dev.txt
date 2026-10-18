@@ -1,0 +1,6 @@
+# Reproducible developer/test tooling for CI and local isolated runs.
+pytest>=9.1,<10
+ruff>=0.16,<0.17
+mypy>=2.4,<3
+playwright>=1.63,<2
+pip-audit>=2.9,<3
