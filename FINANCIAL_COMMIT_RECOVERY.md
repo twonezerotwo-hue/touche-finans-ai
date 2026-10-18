@@ -111,5 +111,7 @@ gizlemez.
 
 PR-03 testleri yalnız geçici klasörlerde sentetik Excel/SQLite kullanır. Canlı
 `C:\ai-excel`, OneDrive workbook'ları, üretim DB'si, Telegram/banka/LLM ağı ve
-üretim kimlik bilgileri kullanılmaz. Bağımsız recovery vault'u ve geniş RBAC
-çalışmaları PR-04/PR-05 kapsamındadır.
+üretim kimlik bilgileri kullanılmaz. Bağımsız recovery vault'u
+`RECOVERY_RUNBOOK.md` ve `scripts/recovery_vault.py` ile uygulanır; geniş RBAC
+çalışmaları PR-05 kapsamındadır. Vault üretim restore'u yapmaz, yalnız şifreli
+kanıt snapshot'ı ve izole dry-run restore sağlar.
