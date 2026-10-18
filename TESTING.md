@@ -38,6 +38,16 @@ After the fix, run `39121924145` completed successfully. Exact skipped tests wer
 The successful run recorded **408 passed / 3 skipped / 352 subtests** on Ubuntu and
 **409 passed / 2 skipped / 352 subtests** on Windows. Dependency audit and secret/path scan both passed.
 
+## PR-06 final product acceptance
+
+`tests/test_final_product_acceptance.py` is the synthetic product-acceptance contract. It verifies the
+deterministic CFO instruction → draft → password approval → Excel/SQLite posting → accounting report →
+encrypted recovery-vault dry-run path; supplier payment, collection, accrual, revenue, loan/FX and
+intercompany fixtures; duplicate retry versus a separate identical payment; locked-workbook degradation;
+scope-limited identity; report consistency; and a measured synthetic workload. The workload assertion is
+only a regression alarm (30 seconds on the CI runner), not a production performance claim. All files are
+created under the per-test temporary directory and are removed after the test.
+
 ## Production data is never touched
 
 * `tests/conftest.py` sets `TOUCHE_BASE_DIR`, `TOUCHE_MAIN_WORKBOOK`, `TOUCHE_BACKUP_WORKBOOK` to a temp folder
@@ -66,6 +76,7 @@ The successful run recorded **408 passed / 3 skipped / 352 subtests** on Ubuntu 
 | `test_cfo_sorgu.py` | project/activity/counterparty/holding questions, period handling, ambiguity never guessed, **zero mutation** (Excel hash, backup, ledger row counts, temp files), "why is this record here" |
 | `test_proje_finansi.py` | revenue/collection/expense/payment/profit/cash kept apart on fixtures, other projects don't leak, work items, counterparty balances, reversals, loans, read-only connection, Holding built from real activities with intercompany eliminated, a newly added activity works unchanged |
 | `test_cfo_http.py` | the same flows over real HTTP (wizard, password approval, queries, navigation data endpoints, RBAC scope, other users' drafts, Excel status) |
+| `test_final_product_acceptance.py` | PR-06 end-to-end financial acceptance: approval, durable posting, reports, encrypted backup/restore, realistic transaction matrix, idempotency, lock/health degradation and scoped identity |
 | `test_ui_tarayici.py` | real Chromium (Playwright): Holding → Gürsar Mimarlık → Göktürk Okulu navigation, back button, deep link after reload, breadcrumb, wizard chips, the 10-step end-to-end scenario, and **no console/CSP error** on any page. Skipped automatically when Playwright/Chromium is missing |
 | existing suites | legacy behaviour (documents, Telegram flows, FX, RBAC, project work items, …) migrated to the isolated environment |
 
