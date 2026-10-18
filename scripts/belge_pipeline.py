@@ -188,3 +188,25 @@ def kuyruk_durumu(belge_id: str) -> dict:
             "adimlar": json.loads(r["adimlar"] or "[]")}
 
 
+def kuyruk_erisim_izinli(belge_id: str, aktor: str, *, faaliyetler=None, yonetici=False) -> bool:
+    """Check pipeline queue ownership and the optional suggested activity scope."""
+    import json
+
+    veritabani_hazirla()
+    with baglanti() as con:
+        row = con.execute(
+            "SELECT olusturan, eslesme FROM belge_kuyrugu WHERE belge_id=?", (str(belge_id),)
+        ).fetchone()
+    if not row:
+        return False
+    scope = {str(x).strip().casefold() for x in (faaliyetler or [])}
+    if scope and "*" not in scope:
+        try:
+            firma = str((json.loads(row["eslesme"] or "{}").get("faaliyet") or "")).casefold()
+        except (TypeError, ValueError):
+            return False
+        if firma and firma not in scope:
+            return False
+    return bool(yonetici or str(row["olusturan"] or "").casefold() == str(aktor or "").casefold())
+
+

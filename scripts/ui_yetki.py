@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import secrets
@@ -17,7 +18,44 @@ YETKI_DOSYASI = Path(VERI_DIR) / "ui_yetkililer.json"
 ROLLER_DOSYASI = Path(VERI_DIR) / "ui_roller.json"
 ROL_LISTESI = ["OWNER", "CFO", "FINANCE_MANAGER", "ACCOUNTANT", "PROJECT_MANAGER", "VIEWER"]
 _LOCK = threading.RLock()
-_ESLESTIRME = {"hash": "", "son": None}
+_ESLESTIRME: dict[str, str | datetime | None] = {"hash": "", "son": None}
+
+
+def _ag_listesi(env_adi, varsayilan):
+    """Parse explicit trusted peer addresses; malformed values fail closed."""
+    ham = os.environ.get(env_adi, varsayilan)
+    sonuc = []
+    for parca in str(ham).split(","):
+        try:
+            sonuc.append(ipaddress.ip_network(parca.strip(), strict=False))
+        except ValueError:
+            continue
+    return tuple(sonuc)
+
+
+def _guvenilir_proxy(client_ip):
+    try:
+        adres = ipaddress.ip_address(str(client_ip or ""))
+    except ValueError:
+        return False
+    return any(adres in ag for ag in _ag_listesi("TOUCHE_TRUSTED_PROXY_IPS", "127.0.0.1/32,::1/128"))
+
+
+def _yerel_host(host_adi):
+    izinli = {
+        x.strip().casefold()
+        for x in os.environ.get("TOUCHE_LOCAL_ADMIN_HOSTS", "127.0.0.1,localhost,::1").split(",")
+        if x.strip()
+    }
+    return host_adi in izinli
+
+
+def _kimlik_basligi(deger):
+    """Reject header injection and proxy-added multi-value identity headers."""
+    metin = str(deger or "").strip().casefold()
+    if not metin or len(metin) > 254 or any(x in metin for x in ("\r", "\n", ",")):
+        return ""
+    return metin
 
 
 def _roller_yukle():
@@ -76,11 +114,12 @@ def _kaydet(kullanicilar):
 
 
 def oturum(headers, host, client_ip):
-    """Yerel yonetici veya Tailscale kimligi dondurur."""
+    """Return a session only across an explicit local/proxy trust boundary."""
     host_adi = str(host or "").split(":", 1)[0].strip("[]").casefold()
-    ts_kullanici = str(headers.get("Tailscale-User-Login") or "").strip().casefold()
-    ts_ad = str(headers.get("Tailscale-User-Name") or ts_kullanici).strip()
-    yerel = client_ip in {"127.0.0.1", "::1"} and host_adi in {"127.0.0.1", "localhost", "::1"}
+    yerel = _guvenilir_proxy(client_ip) and str(client_ip) in {"127.0.0.1", "::1"} and _yerel_host(host_adi)
+    proxy_guvenilir = _guvenilir_proxy(client_ip)
+    ts_kullanici = _kimlik_basligi(headers.get("Tailscale-User-Login")) if proxy_guvenilir else ""
+    ts_ad = str(headers.get("Tailscale-User-Name") or ts_kullanici).strip() if proxy_guvenilir else ""
     if yerel:
         return {"yetkili": True, "yerel": True, "kimlik": "local-admin", "ad": "Yerel yönetici",
                 "eslestirme_gerekli": False, "rol": "OWNER", "faaliyetler": ["*"], "projeler": ["*"]}
@@ -113,7 +152,9 @@ def eslestir(kod, tailscale_kimligi):
     aday = hashlib.sha256(str(kod or "").strip().encode("ascii", errors="ignore")).hexdigest()
     with _LOCK:
         son = _ESLESTIRME.get("son")
-        if not son or datetime.now() > son or not secrets.compare_digest(aday, _ESLESTIRME.get("hash", "")):
+        hash_degeri = _ESLESTIRME.get("hash")
+        if not isinstance(son, datetime) or datetime.now() > son or not isinstance(hash_degeri, str) \
+                or not secrets.compare_digest(aday, hash_degeri):
             raise ValueError("Eşleştirme kodu geçersiz veya süresi dolmuş.")
         kullanicilar = _yukle()
         kullanicilar.add(kimlik)

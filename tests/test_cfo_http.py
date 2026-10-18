@@ -237,6 +237,43 @@ class CfoHttpTestleri(CfoTestTemeli):
         st, b = self.req("GET", "/api/excel/bilgi")
         self.assertTrue(b["yedek_mevcut"])
 
+    def test_http_master_excel_aktarimi_sadece_owner_ve_cfo(self):
+        self._kimlik("viewer-export@x", "VIEWER", ["*"])
+        st, hata = self.req("GET", "/api/excel/indir", kimlik="viewer-export@x")
+        self.assertEqual(st, 403)
+        self.assertIn("OWNER/CFO", hata["hata"])
+
+        self._kimlik("cfo-export@x", "CFO", ["*"])
+        istek = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/excel/indir",
+            method="GET",
+            headers={
+                "Host": "pc.tailnet.ts.net",
+                "Origin": "http://pc.tailnet.ts.net",
+                "Tailscale-User-Login": "cfo-export@x",
+            },
+        )
+        with urllib.request.urlopen(istek, timeout=30) as cevap:
+            self.assertEqual(cevap.status, 200)
+            self.assertTrue(cevap.read(4))
+
+    def test_http_belge_taslagi_sahibi_disinda_gorunmez_ve_onaylanamaz(self):
+        self._kimlik("owner-draft@x", "ACCOUNTANT", ["gursar_mimarlik"])
+        st, taslak = self.req(
+            "POST", "/api/chat",
+            {"soru": "Gürsar Mimarlık Göktürk Okulu projesinde Devrim'e 10 bin TL Gürsar TL Banka hesabından ödeme yapıldı", "faaliyet": "gursar_mimarlik"},
+            kimlik="owner-draft@x",
+        )
+        self.assertEqual(st, 200, taslak)
+        token = taslak["kayit_taslagi"]["token"]
+        self._kimlik("other-draft@x", "CFO", ["touche_holding"])
+        st, liste = self.req("GET", "/api/sohbet-taslaklari", kimlik="other-draft@x")
+        self.assertEqual(st, 200)
+        self.assertEqual(liste["taslaklar"], [])
+        st, hata = self.req("POST", f"/api/belge/{token}/onay", {"parola": "x"}, kimlik="other-draft@x")
+        self.assertEqual(st, 403)
+        self.assertIn("kapsamınızda değil", hata["hata"])
+
 
 def ui_taslak_sayisi():
     import ui_belge_servisi as ui

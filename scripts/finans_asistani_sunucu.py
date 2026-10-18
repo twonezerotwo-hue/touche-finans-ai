@@ -34,6 +34,7 @@ from kurumsal_finans import (  # noqa: E402
 from proje_is_kalemleri import guncelle as proje_kalemini_guncelle, listele as proje_kalemlerini_listele  # noqa: E402
 from ui_belge_servisi import (  # noqa: E402
     MAX_BYTES, belgeyi_hazirla, duzelt as belge_duzelt, listele as belge_listele,
+    belge_erisim_izinli,
     onayla as belge_onayla, reddet as belge_reddet, sohbet_taslagi_duzelt,
     sohbet_taslagi_hazirla, yuklenen_dosyayi_kaydet, _onay_parolasini_dogrula,
     ozet as belge_ozet,
@@ -49,7 +50,7 @@ import veri_katmani  # noqa: E402
 import ai_cfo  # noqa: E402
 import raporlar  # noqa: E402
 from ai_cfo import insights_uret  # noqa: E402
-from belge_pipeline import kuyruk_durumu, kuyruga_ekle, pipeline_calistir  # noqa: E402
+from belge_pipeline import kuyruk_durumu, kuyruga_ekle, kuyruk_erisim_izinli, pipeline_calistir  # noqa: E402
 from belge_pipeline import icerik_hash as belge_icerik_hash  # noqa: E402
 from belge_pipeline import mukerrer_kontrol as belge_mukerrer_kontrol  # noqa: E402
 from butce_forecast import butce_gerceklesen, taahhut_ozeti  # noqa: E402
@@ -283,10 +284,16 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             from finans_islem_journali import recovery_health
 
+            session = self._oturum()
             live_recovery = recovery_health(
                 startup_ready=RECOVERY_HEALTH["durum"] != "not_run",
                 startup_error=RECOVERY_HEALTH.get("hata"),
             )
+            if not session["yetkili"]:
+                return self._json({
+                    "durum": "ok" if live_recovery["durum"] == "ok" else "degraded",
+                    "yerel": False,
+                })
             return self._json({
                 "durum": "ok" if live_recovery["durum"] == "ok" else "degraded",
                 "yerel": True,
@@ -312,11 +319,21 @@ class Handler(BaseHTTPRequestHandler):
                 "yedek_yol": str(yedek) if session.get("yerel") else "Tek yedek (bir önceki sürüm)",
             })
         if parsed.path == "/api/excel/indir":
+            if self._rol(session) not in {"OWNER", "CFO"}:
+                return self._json({"hata": "Tam master Excel dışa aktarımı yalnızca OWNER/CFO yetkisine açıktır."}, 403)
+            audit_db.kaydet("MASTER_WORKBOOK_EXPORTED", actor=session.get("kimlik"),
+                            entity_type="workbook", entity_id="master")
             return self._excel_indir()
         if parsed.path == "/api/belgeler":
-            return self._json({"belgeler": belge_listele()})
+            yonetici = self._rol(session) in {"OWNER", "CFO"}
+            return self._json({"belgeler": belge_listele(
+                aktor=session.get("kimlik"), faaliyetler=session.get("faaliyetler"), yonetici=yonetici,
+            )})
         if parsed.path == "/api/sohbet-taslaklari":
-            return self._json({"taslaklar": belge_listele("sohbet")})
+            yonetici = self._rol(session) in {"OWNER", "CFO"}
+            return self._json({"taslaklar": belge_listele(
+                "sohbet", aktor=session.get("kimlik"), faaliyetler=session.get("faaliyetler"), yonetici=yonetici,
+            )})
         if parsed.path == "/api/proje-kalemleri":
             q = parse_qs(parsed.query)
             if not self._kapsam_izinli(session, self._faaliyet_param(q)):
@@ -369,12 +386,18 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/onay-kurallari":
             return self._json({"kurallar": onay_kurallarini_listele()})
         if parsed.path == "/api/banka-mutabakat":
+            if not rol_yetki.izin_var(self._rol(session), "finans.goruntule") or not self._kapsam_izinli(session, None):
+                return self._json({"hata": "Banka mutabakatı için holding kapsamı yetkisi gerekir."}, 403)
             q = parse_qs(parsed.query)
             return self._json({"hareketler": banka_mutabakat_listesi((q.get("durum") or [None])[0])})
         if parsed.path == "/api/banka-adaylari":
+            if not rol_yetki.izin_var(self._rol(session), "finans.goruntule") or not self._kapsam_izinli(session, None):
+                return self._json({"hata": "Banka adayları için holding kapsamı yetkisi gerekir."}, 403)
             q = parse_qs(parsed.query)
             return self._json({"adaylar": banka_mutabakat_adaylari((q.get("hareket_id") or [""])[0])})
         if parsed.path == "/api/donem-kontrol":
+            if not rol_yetki.izin_var(self._rol(session), "finans.goruntule") or not self._kapsam_izinli(session, None):
+                return self._json({"hata": "Dönem kontrolü için holding kapsamı yetkisi gerekir."}, 403)
             q = parse_qs(parsed.query)
             return self._json(donem_kapanis_kontrolu(
                 int((q.get("yil") or [0])[0]), int((q.get("ay") or [0])[0])
@@ -493,6 +516,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/audit":
             if not rol_yetki.izin_var(self._rol(session), "audit.goruntule"):
                 raise PermissionError("Yetkisiz.")
+            if not self._kapsam_izinli(session, None):
+                raise PermissionError("Audit günlüğü yalnızca holding kapsamıyla görüntülenebilir.")
             return {"kayitlar": audit_db.kayitlar(limit=int((q.get("limit") or [100])[0]))}
         if path == "/api/yetki/roller":
             return {"roller": rol_yetki.rol_listesi(), "aktif_rol": self._rol(session),
@@ -500,7 +525,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/fpa/dogruluk":
             return fpa_ileri.dogruluk_ozeti()
         if path == "/api/belge/kuyruk":
-            return kuyruk_durumu((q.get("belge_id") or [""])[0])
+            belge_id = (q.get("belge_id") or [""])[0]
+            if belge_id and not kuyruk_erisim_izinli(
+                belge_id, session.get("kimlik"), yonetici=self._rol(session) in {"OWNER", "CFO"},
+                faaliyetler=session.get("faaliyetler"),
+            ):
+                raise PermissionError("Bu belge kuyruğu sizin kapsamınızda değil.")
+            return kuyruk_durumu(belge_id)
         if path == "/api/fx/cevir":
             return kur_cevir((q.get("tutar") or ["0"])[0], (q.get("kaynak") or ["USD"])[0],
                              (q.get("hedef") or ["TL"])[0], (q.get("tarih") or [None])[0])
@@ -730,6 +761,11 @@ class Handler(BaseHTTPRequestHandler):
             if eslesme:
                 rol_yetki.kontrol(self._rol(session), "belge.onayla")
                 token, eylem = eslesme.groups()
+                yonetici = self._rol(session) in {"OWNER", "CFO"}
+                if not belge_erisim_izinli(
+                    token, session.get("kimlik"), yonetici=yonetici, faaliyetler=session.get("faaliyetler")
+                ):
+                    return self._json({"hata": "Bu belge taslağı sizin kullanıcı veya faaliyet kapsamınızda değil."}, 403)
                 if eylem == "onay":
                     sonuc = belge_onayla(token, session["kimlik"], self._body().get("parola"))
                     audit_db.kaydet("DOCUMENT_APPROVED", actor=session.get("kimlik"),
@@ -743,7 +779,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(belge_duzelt(token, self._body().get("degisiklikler"), session["kimlik"]))
             eslesme = __import__("re").fullmatch(r"/api/recovery/(TX-[a-f0-9]{32})/authorize", yol)
             if eslesme:
-                rol_yetki.kontrol(self._rol(session), "finans.duzenle")
+                rol_yetki.kontrol(self._rol(session), "recovery.authorize")
                 rol_yetki.kontrol(self._rol(session), "audit.goruntule")
                 body = self._body()
                 from finans_islem_journali import authorize_needs_review
