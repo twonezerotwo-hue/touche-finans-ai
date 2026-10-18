@@ -5,8 +5,15 @@ Her test kendi gecici workbook/DB/audit/queue dosyalarinda calisir.
 """
 from __future__ import annotations
 
+import json
+import os
+import shutil
 import sqlite3
+import subprocess
+import sys
+import textwrap
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import patch
 
 import excel_defter_mutabakati as mutabakat
@@ -199,4 +206,138 @@ class FinanceConsistencyContracts(CfoTestTemeli):
         basarili = sum(1 for x in sonuclar if isinstance(x, dict) and x.get("tamam") is True)
         assert basarili == 1
         assert self.db_scalar("SELECT COUNT(*) FROM fisler") == 1
+
+    def test_fin_p01_mevcut_excel_db_ayrisini_kanitlar(self):
+        """PASS diagnostic: mevcut Excel-ilk akisinda DB kopugu sessiz ayrisma uretiyor."""
+        hazir = self.belge("FIN-P01-DIAG", tutar=18_000)
+        with patch.object(main, "finans_kaydi_yaz", side_effect=sqlite3.OperationalError("synthetic db down")), \
+             patch.object(main.time, "sleep"):
+            ok, mesaj = main.hazirlanan_belgeyi_yaz(hazir, "diagnostic")
+
+        # Bu test mevcut davranisi kanitlar; PR-03 atomik durum makinesi gelince
+        # beklenen sonuc degisecek ve A01 strict XFAIL yeniden PASS olacaktir.
+        assert ok is True
+        assert mesaj == ""
+        assert [x for x in self.ledger() if str(x.get("Kaynak_Belge_ID", "")).startswith("FIN-P01-DIAG-")]
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("FIN-P01-DIAG",)) == 0
+        assert self.queue.exists()
+        kuyruk = [json.loads(x) for x in self.queue.read_text(encoding="utf-8").splitlines() if x.strip()]
+        assert kuyruk and kuyruk[-1]["hazir"]["belge_id"] == "FIN-P01-DIAG"
+        tamam = self.audit_olaylari("belge_tamamlandi")
+        assert tamam and tamam[-1]["muhasebe_fisi"] == 0
+        rapor = mutabakat.kontrol()
+        assert not rapor["tutarli"]
+        assert len(rapor["eksik_defterde"]) == 1
+        assert rapor["eksik_defterde"][0]["excel_tutar"] == 18_000
+
+    def _crash_process_files(self, belge_id):
+        """Alt surec icin tamamen sentetik env ve script hazirlar."""
+        child_root = self.root / "subprocess-crash"
+        child_root.mkdir(parents=True, exist_ok=True)
+        ana = child_root / "ANA.xlsx"
+        yedek = child_root / "ANA_backup.xlsx"
+        shutil.copy2(self.ana, ana)
+        shutil.copy2(self.ana, yedek)
+        hazir_path = child_root / "hazir.json"
+        hazir_path.write_text(json.dumps(self.belge(belge_id, tutar=19_000), ensure_ascii=False), encoding="utf-8")
+        script = child_root / "child.py"
+        repo = Path(__file__).resolve().parents[1]
+        script.write_text(textwrap.dedent(f"""
+            import json, os, sqlite3, sys
+            from pathlib import Path
+            sys.path.insert(0, {str(repo / 'scripts')!r})
+
+            mode = sys.argv[1]
+            belge_id = {belge_id!r}
+            if mode == "crash":
+                import main
+                hazir = json.loads(Path({str(hazir_path)!r}).read_text(encoding="utf-8"))
+                original_yaz = main.yaz
+                def crash_after_excel(*args, **kwargs):
+                    result = original_yaz(*args, **kwargs)
+                    if result.get("basari"):
+                        os._exit(47)
+                    return result
+                main.yaz = crash_after_excel
+                main.hazirlanan_belgeyi_yaz(hazir, "subprocess-crash")
+                raise AssertionError("crash enjeksiyonu tetiklenmedi")
+
+            import config
+            from openpyxl import load_workbook
+            workbook = load_workbook(config.ana_excel_yolu(), read_only=True, data_only=False)
+            try:
+                ws = workbook["03_Kayıt Merkezi"]
+                kaynak_index = ord(config.FIRMALAR["touche_holding"]["ana_ledger"]["sutunlar"]["Kaynak_Belge_ID"]) - ord("A")
+                excel_count = sum(1 for row in ws.iter_rows(min_row=6, max_col=kaynak_index + 1, values_only=True)
+                                  if str(row[kaynak_index] or "").startswith(f"{{belge_id}}-"))
+            finally:
+                workbook.close()
+            db_count = 0
+            if config.FINANS_DB.exists():
+                with sqlite3.connect(config.FINANS_DB) as con:
+                    db_count = con.execute("SELECT COUNT(*) FROM fisler WHERE belge_id=?", (belge_id,)).fetchone()[0]
+            queue = Path(config.LOGLAR) / "finans_sync_queue.jsonl"
+            audit = Path(config.AUDIT_LOG)
+            olaylar = []
+            if audit.exists():
+                olaylar = [json.loads(line).get("olay") for line in audit.read_text(encoding="utf-8").splitlines() if line.strip()]
+            print(json.dumps({{"excel_count": excel_count, "db_count": db_count,
+                               "queue_exists": queue.exists(), "completed": "belge_tamamlandi" in olaylar,
+                               "audit_events": olaylar}}, ensure_ascii=False))
+        """), encoding="utf-8")
+        env = os.environ.copy()
+        env.update({
+            "TOUCHE_BASE_DIR": str(child_root),
+            "TOUCHE_MAIN_WORKBOOK": str(ana),
+            "TOUCHE_BACKUP_WORKBOOK": str(yedek),
+        })
+        return child_root, script, env
+
+    def test_b01_ayri_surec_cokmesinde_excel_db_ayrisini_kanitlar(self):
+        """PASS diagnostic: Excel replacement sonrasi process kesilirse ikinci surec ayrismayi gorur."""
+        belge_id = "B01-SUBPROCESS-CRASH"
+        child_root, _script, env = self._crash_process_files(belge_id)
+        result = subprocess.run(
+            [sys.executable, str(child_root / "child.py"), "crash", belge_id],
+            cwd=str(self.root), env=env, capture_output=True, text=True, timeout=20, check=False,
+        )
+        assert result.returncode == 47, result.stderr or result.stdout
+        inspect = subprocess.run(
+            [sys.executable, str(child_root / "child.py"), "inspect", belge_id],
+            cwd=str(self.root), env=env, capture_output=True, text=True, timeout=20, check=False,
+        )
+        assert inspect.returncode == 0, inspect.stderr or inspect.stdout
+        durum = json.loads(inspect.stdout.strip().splitlines()[-1])
+        assert durum["excel_count"] == 1
+        assert durum["db_count"] == 0
+        assert durum["queue_exists"] is False
+        assert durum["completed"] is False
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="PR-03 process crash recovery markeri ve PENDING_RECOVERY kuyrugu henuz yok",
+    )
+    def test_b02_ayri_surec_cokmesi_kalici_kurtarma_isareti_uretmelidir(self):
+        """Gelecek kontrati: ani kesilme sonrasi sistem kaydi kurtarma icin isaretlemeli."""
+        belge_id = "B02-SUBPROCESS-RECOVERY"
+        child_root, _script, env = self._crash_process_files(belge_id)
+        result = subprocess.run(
+            [sys.executable, str(child_root / "child.py"), "crash", belge_id],
+            cwd=str(self.root), env=env, capture_output=True, text=True, timeout=20, check=False,
+        )
+        assert result.returncode == 47
+        inspect = subprocess.run(
+            [sys.executable, str(child_root / "child.py"), "inspect", belge_id],
+            cwd=str(self.root), env=env, capture_output=True, text=True, timeout=20, check=False,
+        )
+        durum = json.loads(inspect.stdout.strip().splitlines()[-1])
+        assert durum["queue_exists"] is True or "PENDING_RECOVERY" in durum["audit_events"]
+
+    def test_a16_ayni_belge_id_farkli_icerik_cakismasi_reddedilir(self):
+        ilk = self.belge("A16-CONTENT-CONFLICT", tutar=20_000)
+        cekirdek.finans_kaydi_yaz(ilk, "test")
+        ikinci = self.belge("A16-CONTENT-CONFLICT", tutar=21_000)
+        with pytest.raises(ValueError, match="farklı içerikle"):
+            cekirdek.finans_kaydi_yaz(ikinci, "retry-farkli")
+        assert self.db_scalar("SELECT COUNT(*) FROM fisler WHERE belge_id=?", ("A16-CONTENT-CONFLICT",)) == 1
 

@@ -20,7 +20,7 @@ kapsam dışı bıraktığından bu PR'da uygulanabilir yeni üretim modülü yo
 
 | Kimlik | Senaryo | Test/kanıt | Sonuç |
 |---|---|---|---|
-| A01 | Excel başarılı, SQLite posting başarısız | `test_a01_excel_once_db_basarisizsa_tamamlandi_denememeli` | **XFAIL (bilinen hata)** |
+| A01 | Excel başarılı, SQLite posting başarısız | `test_a01_excel_once_db_basarisizsa_tamamlandi_denememeli` | **XFAIL (istenen atomik sözleşme)** |
 | A02 | SQLite approval öncesi kullanılamıyor | `test_a02_db_on_kontrol_basarisizsa_excel_yazilmaz` | PASS |
 | A03 | DB transaction ortasında kesinti/rollback | `test_a03_deneme_sirasinda_sqlite_rollback_yarim_fis_birakmaz` | PASS |
 | A04 | Excel-only durum | `test_a04_excel_only_durum_mutabakatta_eksik_defterdir` | PASS |
@@ -35,6 +35,10 @@ kapsam dışı bıraktığından bu PR'da uygulanabilir yeni üretim modülü yo
 | A13 | Döviz kuru eksikliği | `test_a13_doviz_kuru_yoksa_kayit_reddedilir` | PASS |
 | A14 | Bilinmeyen işlem sessizce giderleşmiyor | `test_a14_bilinmeyen_islem_turu_sessizce_gider_olmaz` | PASS |
 | A15 | Aynı belgeye eşzamanlı approval | `test_a15_es_zamanli_onayda_tek_posting_olur` | PASS |
+| A16 | Aynı belge kimliği farklı içerikle retry | `test_a16_ayni_belge_id_farkli_icerik_cakismasi_reddedilir` | PASS |
+| FIN-P01-DIAG | Mevcut Excel/DB ayrışmasını canlı akışta kanıtlar | `test_fin_p01_mevcut_excel_db_ayrisini_kanitlar` | PASS diagnostic |
+| B01 | Ayrı süreçte Excel sonrası ani kesilme | `test_b01_ayri_surec_cokmesinde_excel_db_ayrisini_kanitlar` | PASS diagnostic |
+| B02 | Ani kesilme sonrası kalıcı recovery işareti | `test_b02_ayri_surec_cokmesi_kalici_kurtarma_isareti_uretmelidir` | **XFAIL (PR-03)** |
 
 İstenen A–F sözleşmelerinin tamamı aşağıdaki şekilde yürütülebilir testlere
 bağlanmıştır. Aynı davranış zaten kapsanıyorsa mevcut regresyon testi
@@ -45,7 +49,7 @@ referanslanmıştır; yeni test eklemek için üretim kodu değiştirilmemiştir
 | A01–A06 | Excel/SQLite başarı, başarısızlık, eksik kayıt ve tutar farkı | Bu dosyadaki A01–A06 |
 | A07–A10 | Kur/fingerprint, mutabakat, tamamlandı/audit kanıtı | A13; `tests/test_excel_mutabakati.py` mutabakat testleri; A09 |
 | B01 | Excel yazılmadan kesinti | `tests/test_excel_deposu.py::test_yerlestirme_hatasinda_ana_degismez_gecici_kalmaz` |
-| B02–B07 | Excel sonrası kesinti, rollback, restart/kuyruk/bozuk kuyruk | A03, A07, A08, A12; `tests/test_excel_deposu.py` geçici dosya/geri dönüş testleri |
+| B02–B07 | Excel sonrası kesinti, rollback, restart/kuyruk/bozuk kuyruk | A03, A07, A08, A12, B01–B02; `tests/test_excel_deposu.py` geçici dosya/geri dönüş testleri |
 | C01–C07 | Tekrar approval, retry, eşzamanlılık, gerçek eşit ödemeler | A10–A12, A15; `tests/test_cfo_http.py::test_http_ayni_komut_ikinci_kez_engellenir` |
 | D01–D09 | Dış değişiklik, kilit, bozukluk, formül, backup, atomic replace, concurrency | `tests/test_excel_deposu.py` AtomiklikVeKoruma/GeciciKilit/GeriDonus sınıfları |
 | E01–E12 | Nakit/gelir/kredi ayrımı, çift taraf, FX, approval ve salt-okuma | `tests/test_holding_cfo.py`, `tests/test_finans_cekirdegi.py`, `tests/test_kurumsal_finans.py`, `tests/test_cfo_http.py` |
@@ -69,13 +73,23 @@ atomik sözleşmeyi bekleyen `xfail(strict=True)` ile gösterir. Bu bir
 **confirmed defect**tir; testin XPASS etmesi PR-03'teki düzeltmenin geldiğini
 göstermelidir.
 
+Ayrı bir Python sürecinde `os._exit(47)` ile Excel atomic replace tamamlandıktan,
+SQLite posting başlamadan hemen önce kesinti enjekte edildi. İkinci, yeni süreçte
+gözlenen durum deterministiktir: Excel satırı **1**, SQLite fişi **0**, senkron
+kuyruğu **yok**, `belge_tamamlandi` audit'i **yok**. Bu, normal exception kuyruğu
+recovery'sinin process-kill aralığını kapsamadığını gösteren ayrı bir
+**confirmed defect**tir; üretim koduna dokunulmadan B01 ile kanıtlanır.
+
 | Defect ID | Önem | Etkilenen fonksiyon | Üretim gözlemi | Doğru davranış | Olası finansal etki | PR-03 düzeltmesi |
 |---|---|---|---|---|---|---|
 | FIN-P01 | P1 | `scripts/main.py::hazirlanan_belgeyi_yaz` | Excel yazılır, SQLite üç denemede başarısız olur; işlem kuyruğa alındığı halde `True` ve tamamlandı audit'i döner | Commit sözleşmesi sağlanmıyorsa başarı dönmemeli; durum `INCOMPLETE` olarak kalmalı ve Excel/DB eşleştirmesi recovery ile tamamlanmalı | Kullanıcı tamamlandı sanarak aynı ödemeyi tekrar girebilir veya merkezi rapor eksik kalabilir | İşlem kimliği + durable state; DB posting doğrulanmadan tamamlandı/audit yok; idempotent recovery |
+| FIN-P02 | P1 | `scripts/main.py::hazirlanan_belgeyi_yaz` + `scripts/excel_deposu.py::guvenli_degistir` sınırı | Ayrı süreç Excel replacement sonrası DB öncesi kesilince Excel kalıyor; queue/state/audit marker yok | Restart yeni işlemi `PENDING_RECOVERY` olarak bulmalı; DB posting veya güvenli rollback sonrası açık sonuç üretmeli | Rapor Excel ve DB arasında kalıcı ayrışabilir; kullanıcı aynı belgeyi yeniden deneyebilir | Durable transaction manifesti, `PREPARED → EXCEL_WRITTEN → DB_POSTED → COMMITTED` state machine; startup recovery ve idempotent replay |
 
-Bu PR'da doğrulanmış tek finansal bütünlük hatası FIN-P01'dir. Diğer tabloda
-listelenenler mevcut güvenlik sözleşmelerinin test edilmiş sınırları veya PR-03
-için tasarım riskleridir; testler bunları varsayım olarak değil, sentetik
+Bu PR'da doğrulanmış finansal bütünlük hataları FIN-P01 ve FIN-P02'dir. A01 ve
+B02, istenen gelecek atomik/recovery davranışını strict XFAIL olarak korur;
+FIN-P01-DIAG ve B01 ise mevcut üretim davranışını PASS olarak kanıtlar. Diğer
+tabloda listelenenler mevcut güvenlik sözleşmelerinin test edilmiş sınırları veya
+PR-03 için tasarım riskleridir; testler bunları varsayım olarak değil, sentetik
 durumda gözlemlenebilir sonuç olarak raporlar.
 
 Diğer testler mevcut davranışın güvenli sınırlarını doğrular; A04–A06 ve
@@ -99,14 +113,27 @@ kuyruk satırı silinmez. Bunlar şu an **confirmed pass** sonuçlarıdır.
    kayıtları gelir/gider/nakit toplamlarına yanlışlıkla dahil etmemeli.
 6. Bu PR'daki A01 dahil tüm sözleşmeler yeşile dönmeli; gerçek üretim verisiyle
    ayrı bir entegrasyon testi yazılmamalı.
+7. İşlem durumları en az `PREPARED`, `EXCEL_WRITTEN`, `DB_POSTED`, `COMMITTED`,
+   `PENDING_RECOVERY`, `NEEDS_REVIEW`, `ABORTED` olarak kalıcı tutulmalı; her
+   geçişte transaction ID, belge hash'i, workbook fingerprint'i ve audit kanıtı
+   bulunmalı.
+8. Başlangıçta yarım transaction taranmalı; aynı belge kimliği aynı finansal
+   hash ile idempotent devam etmeli, farklı hash kesin çatışma olarak durmalı.
+9. Dashboard/raporlar recovery bekleyen işlemleri kesinleşmiş gelir-gider,
+   nakit veya borç toplamına katmamalı; kullanıcıya mutabakat uyarısı göstermeli.
 
 ## Sonuç kaydı
 
-İzole yeni test paketi: **14 passed, 1 strict xfailed**. Tam yerel doğrulama
-(`py -3.12 -m pytest -q -rs`): **417 passed, 8 skipped, 1 strict xfailed,
-352 subtests passed** (2:53). XFAIL yalnızca A01'deki
-bilinen Excel-first/SQLite-failure atomiklik açığıdır; test skip edilmemiş,
+İzole yeni test paketi: **17 passed, 2 strict xfailed**. Yeni B01 testi gerçek
+ayrı Python süreci kullanır; çocuk süreç yalnızca sentetik klasörde çalışır ve
+exit code `47` ile kesilir. XFAIL'ler A01 (exception sonrası atomiklik) ve B02
+(process-kill sonrası durable recovery markerı) olup skip edilmemiş,
 assertion gevşetilmemiştir.
+
+Final yerel doğrulama (`py -3.12 -m pytest -q -rs`): **420 passed, 8 skipped,
+2 strict xfailed, 352 subtests passed** (193.85 sn). Skip'ler: üretim DB kopyası
+ortam değişkeni yok (1) ve yerel Chromium kurulu değil (7). İki XFAIL yalnızca
+bilinen/gelecek güvenlik sözleşmeleridir; normal testler yeşildir.
 
 Yerel skip nedenleri: `tests/test_acceptance.py:300` üretim DB kopyası ortam
 değişkeni tanımlı değil; `tests/test_ui_tarayici.py` içindeki 7 tarayıcı testi
@@ -121,7 +148,7 @@ kimlik bilgileri erişilmemiştir. Merge/deploy yapılmayacaktır.
 
 ## CI doğrulaması
 
-GitHub Actions run **39127031212** (commit `3ccafa7`) başarılıdır:
+Önceki PR-02 koşusu **39127326028** (commit `e5c7f8c`) başarılıydı:
 
 - Ubuntu: test job başarılı; izole suite, Ruff baseline ve incremental mypy
   adımları başarılı.
@@ -131,6 +158,6 @@ GitHub Actions run **39127031212** (commit `3ccafa7`) başarılıdır:
   desteklenmeyen VCS `excel-parser` ayrı raporlanır.
 - Secret/production-path scan: başarılı.
 
-CI koşusu tam test sayılarını ayrıca platform logunda raporlar; yerel Windows
-sonucu yukarıdaki **417 passed, 8 skipped, 1 xfailed** değeridir. CI'da
+CI koşusu tam test sayılarını ayrıca platform logunda raporlar; yeni commit için
+koşu numarası ve Ubuntu/Windows skip listesi final rapora eklenecektir. CI'da
 üretim Excel/SQLite erişimi açılmamıştır.
