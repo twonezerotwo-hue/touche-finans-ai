@@ -2,6 +2,14 @@
 
 Touche Holding için yerel çalışan finans karar destek ve belge işleme sistemi.
 
+## Mühendislik durumu
+
+PR-02–PR-06 main dalına güvenli biçimde birleştirildi. Güncel main SHA:
+`bdc375d0fda749ec8345a6b8c89b95a485623646`. Sentetik kabul, kurtarma, RBAC ve
+şifreli recovery vault testleri CI'da yeşil. Ölçümlü kanıt, açık riskler ve kontrollü
+kurulum kapıları için [PRODUCT_READINESS_REPORT.md](PRODUCT_READINESS_REPORT.md)
+dosyasına bakın. Bu rapor üretime dağıtım onayı değildir.
+
 ## Özellikler
 
 - Tek master Excel mimarisi

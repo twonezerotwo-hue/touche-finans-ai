@@ -136,3 +136,10 @@ data; clicking a button calls `/api/cfo/adim` (no LLM). Browser tests assert tha
 ## 6. Operations tool — `scripts/excel_operasyon.py`
 `durum`, `dogrula`, `mutabakat`, `defteri-aktar`, `envanter`, `temizle`, `geri-don`, `entegre-et` — human/ops only, never
 imported by the server, bot or AI layer.
+
+## 7. Kabul ve sağlık kanıtı
+
+PR-03 journal/recovery, PR-04 bağımsız şifreli vault, PR-05 RBAC ve PR-06 uçtan
+uca sentetik kabul sözleşmesi main üzerinde birlikte çalışır. `/api/health`
+bekleyen recovery, NEEDS_REVIEW veya audit onarım kuyruğu varsa `degraded`
+döner; bu durum raporlamanın tamamen sağlıklı olduğu izlenimini engeller.

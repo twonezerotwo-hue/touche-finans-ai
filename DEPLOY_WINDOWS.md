@@ -189,3 +189,11 @@ MAIN not found · `git merge --ff-only` refused · tests/`windows_dogrulama` fai
 > Finish with the final report: repository (HEAD == origin/main), active MAIN/BACKUP paths + hashes, cleanup counts (files and folders deleted,
 > files kept and why), reconciliation result, Windows/OneDrive validation lines, acceptance results, the running process path and the startup banner,
 > and the final scan of every remaining Smart Excel-related file.
+
+## Kontrollü dağıtım kapısı
+
+Dağıtım öncesi son main SHA ve post-merge CI sonucu [PRODUCT_READINESS_REPORT.md](PRODUCT_READINESS_REPORT.md)
+ile karşılaştırılmalıdır. Ubuntu ve Windows CI yeşil değilse, sentetik mutabakat
+PASS değilse veya tarayıcı kabul kanıtı yoksa işlem `NOT_FULLY_VERIFIED` olarak
+kalır. Üretim dosyalarına geçişten önce sahip onayı, ayrı yedek anahtarı, geri
+dönüş provası ve Windows/Excel kilit testi ayrıca yapılmalıdır.

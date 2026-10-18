@@ -123,3 +123,10 @@ the sum of **approved** work items only (drafts excluded).
 * Natural-language document classification beyond the existing upload pipeline (unchanged).
 * Metrics for Excel rows typed by hand appear only after `excel_operasyon.py defteri-aktar` (the Holding page warns).
 * Currency defaults to TL when neither the sentence nor the chosen account says otherwise (always visible in the draft).
+
+## PR-06 doğrulaması
+
+`tests/test_final_product_acceptance.py`, talimatın deterministik taslağa,
+parolalı onaya, Excel/SQLite defterine, rapora ve bağımsız recovery vault dry-run'a
+ulaştığı yolu sentetik olarak doğrular. Aynı tutarlı farklı belgeler ayrı tutulur;
+aynı belge tekrarında idempotency korunur. Test, gerçek LLM veya ağ çağrısı yapmaz.
