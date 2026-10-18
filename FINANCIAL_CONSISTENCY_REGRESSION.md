@@ -148,7 +148,7 @@ kimlik bilgileri erişilmemiştir. Merge/deploy yapılmayacaktır.
 
 ## CI doğrulaması
 
-Final PR-02 koşusu **39134586213** (commit `82e3bdc2cfa0aca07ef2677a10bff8abd4ac1a34`) başarılıdır:
+Final PR-02 koşusu **39135289792** (commit `2bade5483b044c699923c59310da736bdefd721d`) başarılıdır:
 
 - Ubuntu: **425 passed, 3 skipped, 2 xfailed, 352 subtests passed**.
   Skip'ler: `tests/test_acceptance.py:300` üretim DB kopyası ortam değişkeni
@@ -164,4 +164,4 @@ Final PR-02 koşusu **39134586213** (commit `82e3bdc2cfa0aca07ef2677a10bff8abd4a
 - Secret/production-path scan: başarılı.
 
 CI'da üretim Excel/SQLite erişimi açılmamıştır. Run bağlantısı:
-`https://github.com/twonezerotwo-hue/touche-finans-ai/actions/runs/39134586213`.
+`https://github.com/twonezerotwo-hue/touche-finans-ai/actions/runs/39135289792`.
