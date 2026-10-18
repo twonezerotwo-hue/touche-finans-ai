@@ -48,6 +48,12 @@ scope-limited identity; report consistency; and a measured synthetic workload. T
 only a regression alarm (30 seconds on the CI runner), not a production performance claim. All files are
 created under the per-test temporary directory and are removed after the test.
 
+PR-06 local result: **456 passed, 8 skipped, 352 subtests passed in 136.00s**.
+The 8 skips were one opt-in production-DB-copy migration test and seven Chromium
+tests because a browser binary was unavailable in this environment. PR-06 CI run
+`39177361390` passed on Ubuntu and Windows; post-merge main run `39177888177`
+also passed on Ubuntu (1m51s), Windows (4m35s), dependency audit and secret/path scan.
+
 ## Production data is never touched
 
 * `tests/conftest.py` sets `TOUCHE_BASE_DIR`, `TOUCHE_MAIN_WORKBOOK`, `TOUCHE_BACKUP_WORKBOOK` to a temp folder

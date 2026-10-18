@@ -41,3 +41,10 @@ audit zinciri ve yetkili manuel inceleme yine zorunludur.
 
 PR-04 testleri yalnız sentetik Excel/SQLite/audit dosyalarıyla çalışır; canlı
 OneDrive, `C:\ai-excel`, üretim veritabanı ve gerçek kimlik bilgileri kullanılmaz.
+
+## PR-06 işletim kanıtı
+
+Uçtan uca kabul testi, onaylı bir sentetik finans kaydından vault snapshot
+oluşturur ve yalnız boş bir hedefe `restore_dry_run()` ile geri açar. SQLite
+online backup, manifest SHA-256 ve AES-256-GCM doğrulaması geçmeden restore
+başarılı sayılmaz. Bu kanıt üretim restore'u veya ölçülmüş RPO/RTO iddiası değildir.

@@ -48,3 +48,10 @@ erişmez ve deployment yapmaz.
 PR-05 testleri yalnız sentetik HTTP istekleri ve geçici dosyalar kullanır:
 uzak başlık spoofing'i, explicit trusted proxy, localhost Host allowlist'i,
 role recovery sınırı, tam Excel export yetkisi ve belge taslağı faaliyet kapsamı.
+
+## Son doğrulama sınırı
+
+PR-06 ile yetkili kapsam kontrolü, kilitli çalışma kitabında degraded sağlık,
+idempotent posting ve şifreli snapshot geri açma sentetik olarak kanıtlandı.
+Tarayıcı bağımlılığı bulunmayan yerel ortamda 7 Chromium testi atlandı; bu nedenle
+UI kabulü ve gerçek reverse-proxy/OneDrive davranışı üretim için ayrıca doğrulanmalıdır.
