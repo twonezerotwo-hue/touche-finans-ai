@@ -13,7 +13,7 @@ import json
 import logging
 import sqlite3
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -22,6 +22,7 @@ from typing import Any
 import config
 import finans_cekirdegi as cekirdek
 import guvenlik
+import yetki
 from guvenlik import audit_yaz
 from openpyxl import load_workbook
 
@@ -1067,20 +1068,97 @@ def recovery_dry_run() -> dict:
     return recover_pending_transactions(dry_run=True)
 
 
-def authorize_needs_review(tx_id: str, admin_identity: str, reason: str) -> dict:
-    """Require an explicit, audited decision before retrying NEEDS_REVIEW."""
-    if not str(admin_identity).strip() or not str(reason).strip():
-        raise ValueError("Yönetici kimliği ve karar gerekçesi zorunludur.")
+def recovery_health(*, startup_ready: bool = True, startup_error: str | None = None) -> dict:
+    """Return a live, read-only view of recovery consistency.
+
+    This function deliberately never initializes the schema or writes an audit
+    record.  It is safe to call from a health endpoint on every request.
+    """
+    result = {
+        "durum": "degraded" if not startup_ready or startup_error else "ok",
+        "startup_ready": bool(startup_ready),
+        "islem_sayisi": 0,
+        "needs_review": 0,
+        "pending_recovery": 0,
+        "audit_repair_required": 0,
+        "hata": startup_error,
+    }
+    con = _read_only_connection()
+    if con is None:
+        result["durum"] = "degraded"
+        result["hata"] = result["hata"] or "Finans journal veritabanı salt okunur olarak açılamadı."
+        return result
+    try:
+        table = con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='finans_islemleri'"
+        ).fetchone()
+        if not table:
+            result["durum"] = "degraded"
+            result["hata"] = result["hata"] or "Finans journal şeması bulunamadı."
+            return result
+        row = con.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN state='NEEDS_REVIEW' THEN 1 ELSE 0 END) AS review, "
+            "SUM(CASE WHEN state IN ('PREPARED','EXCEL_WRITTEN','DB_POSTED','PENDING_RECOVERY') THEN 1 ELSE 0 END) AS pending, "
+            "SUM(CASE WHEN audit_repair_required=1 THEN 1 ELSE 0 END) AS audit_backlog "
+            "FROM finans_islemleri"
+        ).fetchone()
+        result.update({
+            "islem_sayisi": int(row["total"] or 0),
+            "needs_review": int(row["review"] or 0),
+            "pending_recovery": int(row["pending"] or 0),
+            "audit_repair_required": int(row["audit_backlog"] or 0),
+        })
+        if any(result[key] for key in ("needs_review", "pending_recovery", "audit_repair_required")):
+            result["durum"] = "degraded"
+    except sqlite3.Error as exc:
+        result["durum"] = "degraded"
+        result["hata"] = f"Recovery sağlık sorgusu başarısız: {type(exc).__name__}: {exc}"
+    finally:
+        con.close()
+    return result
+
+
+def authorize_needs_review(
+    tx_id: str,
+    admin_identity: str,
+    reason: str,
+    *,
+    authorization: Mapping[str, Any] | None = None,
+) -> dict:
+    """Require a verified session, scoped role and an audited decision.
+
+    A caller-supplied identity string is intentionally insufficient.  The HTTP
+    layer passes the session produced by ``ui_yetki.oturum`` after its normal
+    authentication and origin checks.
+    """
+    identity = str(admin_identity or "").strip().casefold()
+    decision = str(reason or "").strip()
+    if not identity or len(decision) < 10:
+        raise ValueError("Doğrulanmış yönetici oturumu ve anlamlı karar gerekçesi zorunludur.")
+    if not isinstance(authorization, Mapping):
+        raise PermissionError("Manuel kurtarma yalnız doğrulanmış oturum üzerinden yapılabilir.")
+    if authorization.get("yetkili") is not True:
+        raise PermissionError("Oturum manuel kurtarma için yetkili değil.")
+    session_identity = str(authorization.get("kimlik") or "").strip().casefold()
+    if not session_identity or session_identity != identity:
+        raise PermissionError("Kurtarma kimliği mevcut oturumla eşleşmiyor.")
+    role = yetki.rol_normalize(authorization.get("rol"))
+    yetki.kontrol(role, "finans.duzenle")
+    yetki.kontrol(role, "audit.goruntule")
     tx = _load_tx(tx_id)
     if tx["state"] != "NEEDS_REVIEW":
         raise ValueError("Yalnızca NEEDS_REVIEW işlemleri manuel kurtarmaya açılabilir.")
+    faaliyetler = {str(x).strip().casefold() for x in (authorization.get("faaliyetler") or [])}
+    if "*" not in faaliyetler and str(tx.get("firma_key") or "").strip().casefold() not in faaliyetler:
+        raise PermissionError("Oturum bu faaliyetin kurtarma kapsamına sahip değil.")
     _event(
         tx_id,
         "NEEDS_REVIEW",
         "transaction_admin_recovery_approved",
-        {"admin_identity": str(admin_identity), "reason": str(reason)[:500]},
+        {"admin_identity": identity, "role": role, "reason": decision[:500]},
     )
-    _transition(tx_id, "PENDING_RECOVERY", error=f"Manuel yönetici kararı: {reason}")
+    _transition(tx_id, "PENDING_RECOVERY", error=f"Manuel yönetici kararı: {decision}")
     return _recover_one(_load_tx(tx_id))
 
 

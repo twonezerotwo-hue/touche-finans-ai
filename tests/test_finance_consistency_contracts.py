@@ -570,3 +570,49 @@ class FinanceConsistencyContracts(CfoTestTemeli):
             ("B17-CONCURRENT-DOCUMENT",),
         ) == 1
 
+    def test_b18_needs_review_yetkisiz_kurtarma_reddedilir_ve_owner_acikca_onaylar(self):
+        self._pending_transaction("B18-MANUAL-REVIEW")
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE finans_islemleri SET state='NEEDS_REVIEW' WHERE document_id=?",
+                ("B18-MANUAL-REVIEW",),
+            )
+        tx_id = self.db_scalar(
+            "SELECT transaction_id FROM finans_islemleri WHERE document_id=?",
+            ("B18-MANUAL-REVIEW",),
+        )
+        with pytest.raises(PermissionError, match="doğrulanmış oturum"):
+            journal.authorize_needs_review(tx_id, "forged-admin", "manuel kurtarma kararı")
+        viewer = {
+            "yetkili": True, "kimlik": "viewer", "rol": "VIEWER",
+            "faaliyetler": ["*"], "projeler": ["*"],
+        }
+        with pytest.raises(PermissionError):
+            journal.authorize_needs_review(tx_id, "viewer", "Bu işlem incelendi", authorization=viewer)
+        owner = {
+            "yetkili": True, "kimlik": "owner", "rol": "OWNER",
+            "faaliyetler": ["*"], "projeler": ["*"],
+        }
+        result = journal.authorize_needs_review(
+            tx_id, "owner", "Excel ve journal kanıtları manuel olarak doğrulandı", authorization=owner
+        )
+        assert result["status"] == "COMMITTED"
+        assert self._journal_state("B18-MANUAL-REVIEW") == "COMMITTED"
+
+    def test_b19_recovery_health_canli_durumlari_ve_startup_hatasini_gosterir(self):
+        self._pending_transaction("B19-HEALTH")
+        health = journal.recovery_health()
+        assert health["durum"] == "degraded"
+        assert health["pending_recovery"] == 1
+        with cekirdek._baglanti() as con:
+            con.execute(
+                "UPDATE finans_islemleri SET state='NEEDS_REVIEW', audit_repair_required=1 "
+                "WHERE document_id=?", ("B19-HEALTH",)
+            )
+        health = journal.recovery_health()
+        assert health["needs_review"] == 1
+        assert health["audit_repair_required"] == 1
+        failed = journal.recovery_health(startup_ready=False, startup_error="synthetic startup failure")
+        assert failed["durum"] == "degraded"
+        assert failed["hata"] == "synthetic startup failure"
+

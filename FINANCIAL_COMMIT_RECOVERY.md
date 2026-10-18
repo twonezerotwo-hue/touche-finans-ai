@@ -60,7 +60,14 @@ veya dış değişiklik `NEEDS_REVIEW`/yeniden denenebilir pending sonucu üreti
 `finans_islem_journali.recover_pending_transactions()` başlangıçta terminal
 olmayan işlemleri tarar. `NEEDS_REVIEW` kayıtları yalnızca raporlanır; otomatik
 olarak tekrar post edilmez. Açık bir yönetici kimliği ve gerekçesiyle
-`authorize_needs_review()` çağrılmadan kurtarma başlatılamaz.
+`authorize_needs_review()` çağrılmadan kurtarma başlatılamaz. Manuel karar yalnız
+doğrulanmış UI oturumundan gelebilir: kimlik oturumdaki `kimlik` alanıyla
+eşleşmeli, oturum `yetkili` olmalı, rol hem `finans.duzenle` hem
+`audit.goruntule` iznine sahip olmalı ve faaliyet kapsamı transaction'ın
+`firma_key` değerini içermelidir (veya `*` olmalıdır). Yetkisiz rol, sahte
+kimlik veya kısa/anlamsız gerekçe reddedilir ve kurtarma post edilmez. HTTP
+katmanındaki `POST /api/recovery/<transaction_id>/authorize` rotası aynı
+kontrolleri uygulayarak oturum bağlamını journal'a geçirir.
 
 `recovery_dry_run()` SQLite'ı salt-okunur URI ile açar; şema oluşturmaz,
 INSERT/UPDATE yapmaz, audit eklemez ve Excel/DB dosyalarını değiştirmez.
@@ -94,8 +101,10 @@ kanıtını tamamlar; finansal fişleri yeniden post etmez.
 API yanıtları geriye uyumlu alanların yanında `transaction_id`, `status`,
 `committed` ve `recovery_required` alanlarını taşır.
 
-Başlangıç recovery taraması çalışmazsa veya pending/review kayıtları kalırsa
-`/api/health` `degraded` döner; sistem bu durumu sağlıklı finansal görünüm gibi
+Başlangıç recovery taraması çalışmazsa veya pending/review/audit-onarım kayıtları
+kalırsa `/api/health` `degraded` döner; endpoint her çağrıda journal'ı salt
+okunur sorgulayarak güncel sayımları (`pending_recovery`, `needs_review`,
+`audit_repair_required`) yeniler. Sistem bu durumu sağlıklı finansal görünüm gibi
 gizlemez.
 
 ## Kapsam ve güvenlik

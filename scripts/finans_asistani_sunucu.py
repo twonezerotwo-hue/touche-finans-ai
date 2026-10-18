@@ -281,10 +281,16 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(yol.read_bytes())
             return
         if parsed.path == "/api/health":
+            from finans_islem_journali import recovery_health
+
+            live_recovery = recovery_health(
+                startup_ready=RECOVERY_HEALTH["durum"] != "not_run",
+                startup_error=RECOVERY_HEALTH.get("hata"),
+            )
             return self._json({
-                "durum": "ok" if RECOVERY_HEALTH["durum"] == "ok" else "degraded",
+                "durum": "ok" if live_recovery["durum"] == "ok" else "degraded",
                 "yerel": True,
-                "recovery": dict(RECOVERY_HEALTH),
+                "recovery": live_recovery,
             })
         if parsed.path == "/api/session":
             return self._json(self._oturum())
@@ -735,6 +741,20 @@ class Handler(BaseHTTPRequestHandler):
                                     entity_type="belge", entity_id=token)
                     return self._json(sonuc)
                 return self._json(belge_duzelt(token, self._body().get("degisiklikler"), session["kimlik"]))
+            eslesme = __import__("re").fullmatch(r"/api/recovery/(TX-[a-f0-9]{32})/authorize", yol)
+            if eslesme:
+                rol_yetki.kontrol(self._rol(session), "finans.duzenle")
+                rol_yetki.kontrol(self._rol(session), "audit.goruntule")
+                body = self._body()
+                from finans_islem_journali import authorize_needs_review
+
+                sonuc = authorize_needs_review(
+                    eslesme.group(1),
+                    session.get("kimlik") or "",
+                    body.get("reason") or body.get("gerekce") or "",
+                    authorization=session,
+                )
+                return self._json(sonuc)
             eslesme = __import__("re").fullmatch(r"/api/proje-kalemi/([A-Za-z0-9._-]{1,80})/guncelle", yol)
             if eslesme:
                 rol_yetki.kontrol(self._rol(session), "finans.duzenle")
