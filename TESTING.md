@@ -27,6 +27,17 @@ The first GitHub Actions run for PR-01 was `39116113782`: Ubuntu completed with 
 the path pattern it scans. This was corrected without weakening the scanner. The dependency audit is now blocking for known
 vulnerabilities; the `excel-parser` VCS dependency is reported separately and is explicitly not considered audited.
 
+After the fix, run `39121924145` completed successfully. Exact skipped tests were:
+
+* Ubuntu: `tests/test_acceptance.py:300` (production DB copy not configured),
+  `tests/test_cfo_borc_eslestirme.py:400` (Windows-only Excel sharing lock), and
+  `tests/test_phase1.py:230` (optional `pdftoppm`/Poppler unavailable).
+* Windows: `tests/test_acceptance.py:300` (production DB copy not configured) and
+  `tests/test_phase1.py:230` (optional `pdftoppm`/Poppler unavailable).
+
+The successful run recorded **408 passed / 3 skipped / 352 subtests** on Ubuntu and
+**409 passed / 2 skipped / 352 subtests** on Windows. Dependency audit and secret/path scan both passed.
+
 ## Production data is never touched
 
 * `tests/conftest.py` sets `TOUCHE_BASE_DIR`, `TOUCHE_MAIN_WORKBOOK`, `TOUCHE_BACKUP_WORKBOOK` to a temp folder
