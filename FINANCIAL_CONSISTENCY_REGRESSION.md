@@ -118,3 +118,19 @@ sentetik `tam_akilli_excel`, geçici SQLite, audit ve queue kullanır. Uygulama
 modülleri import edilmeden önce test konfigürasyonu geçici yollara yönlendirilir;
 gerçek `C:\ai-excel`, OneDrive dosyaları, Telegram/banka/LLM ve üretim
 kimlik bilgileri erişilmemiştir. Merge/deploy yapılmayacaktır.
+
+## CI doğrulaması
+
+GitHub Actions run **39127031212** (commit `3ccafa7`) başarılıdır:
+
+- Ubuntu: test job başarılı; izole suite, Ruff baseline ve incremental mypy
+  adımları başarılı.
+- Windows: test job başarılı; izole suite, Ruff baseline ve incremental mypy
+  adımları başarılı.
+- Dependency audit: başarılı; bilinen zafiyetlerde job başarısız olur,
+  desteklenmeyen VCS `excel-parser` ayrı raporlanır.
+- Secret/production-path scan: başarılı.
+
+CI koşusu tam test sayılarını ayrıca platform logunda raporlar; yerel Windows
+sonucu yukarıdaki **417 passed, 8 skipped, 1 xfailed** değeridir. CI'da
+üretim Excel/SQLite erişimi açılmamıştır.
