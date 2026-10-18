@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "codex/**", "chore/**"]
+    branches: [main, "codex/**", "chore/**", "test/**", "fix/**", "feat/**"]
   pull_request:
   workflow_dispatch:
 
@@ -19,7 +19,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     env:
       PYTHONUTF8: "1"
-      # CI must never resolve the Windows production default or OneDrive data.
+      # CI resolves only the repository's disposable runtime directory.
       TOUCHE_BASE_DIR: ${{ github.workspace }}/.ci-runtime
       TOUCHE_MAIN_WORKBOOK: ${{ github.workspace }}/.ci-runtime/veri/TEST.xlsx
       TOUCHE_BACKUP_WORKBOOK: ${{ github.workspace }}/.ci-runtime/yedek/TEST_backup.xlsx
@@ -60,8 +60,13 @@ jobs:
       - name: Install audit tool
         run: python -m pip install --upgrade pip-audit
       - name: Audit pinned dependencies
-        continue-on-error: true
         run: python -m pip_audit -r requirements.txt
+      - name: Report unsupported VCS dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "NOTICE: excel-parser is installed from a VCS URL and is not audited by pip-audit."
+          grep -n '^excel-parser[[:space:]]*@' requirements.txt
 
   secret-scan:
     name: Secret and production-path scan
@@ -77,7 +82,7 @@ jobs:
             exit 1
           fi
           # The legacy Windows default is documented application configuration;
-          # personal OneDrive/Desktop paths must never be committed.
+          # Personal workstation paths must never be committed.
           if git grep -n -I -E 'OneDrive[/\\](Desktop|Belgeler)|Users[/\\][^/\\]+[/\\](Desktop|Documents)' -- . ':!*.md' ':!scripts/config.py'; then
             echo "Personal data path found in tracked source" >&2
             exit 1

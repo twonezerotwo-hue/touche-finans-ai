@@ -22,6 +22,11 @@ the existing tree has known debt (recorded in the audit) and application logic i
 will ratchet these checks to blocking gates module by module. The dependency audit and production-path/secret scan also run
 on every push and pull request. CI always redirects `TOUCHE_*` paths to `.ci-runtime` and never receives production files.
 
+The first GitHub Actions run for PR-01 was `39116113782`: Ubuntu completed with **408 passed / 3 skipped**, Windows with
+**409 passed / 2 skipped**, and dependency audit completed. The secret scan failed because its own workflow comment contained
+the path pattern it scans. This was corrected without weakening the scanner. The dependency audit is now blocking for known
+vulnerabilities; the `excel-parser` VCS dependency is reported separately and is explicitly not considered audited.
+
 ## Production data is never touched
 
 * `tests/conftest.py` sets `TOUCHE_BASE_DIR`, `TOUCHE_MAIN_WORKBOOK`, `TOUCHE_BACKUP_WORKBOOK` to a temp folder
