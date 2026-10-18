@@ -1150,7 +1150,7 @@ def authorize_needs_review(
     if not session_identity or session_identity != identity:
         raise PermissionError("Kurtarma kimliği mevcut oturumla eşleşmiyor.")
     role = yetki.rol_normalize(authorization.get("rol"))
-    yetki.kontrol(role, "finans.duzenle")
+    yetki.kontrol(role, "recovery.authorize")
     yetki.kontrol(role, "audit.goruntule")
     tx = _load_tx(tx_id)
     if tx["state"] != "NEEDS_REVIEW":

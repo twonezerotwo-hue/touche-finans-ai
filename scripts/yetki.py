@@ -17,6 +17,7 @@ IZINLER = [
     "belge.yukle", "belge.onayla", "transfer.yap", "donem.kapat",
     "butce.duzenle", "senaryo.olustur", "kur.duzenle", "ayar.duzenle",
     "rapor.goruntule", "audit.goruntule", "ai.sor",
+    "recovery.authorize",
 ]
 
 _OKUMA = {"holding.goruntule", "finans.goruntule", "rapor.goruntule", "ai.sor"}
@@ -24,6 +25,8 @@ _PROJE = _OKUMA | {"belge.yukle"}
 _MUHASEBE = _PROJE | {"finans.duzenle", "senaryo.olustur"}
 _YONETIM = _MUHASEBE | {"belge.onayla", "transfer.yap", "butce.duzenle", "kur.duzenle", "audit.goruntule"}
 _CFO = _YONETIM | {"donem.kapat"}
+# Recovery replays are administrative actions, not ordinary accounting edits.
+_CFO = _CFO | {"recovery.authorize"}
 _TUM = set(IZINLER)
 
 ROL_IZINLERI = {

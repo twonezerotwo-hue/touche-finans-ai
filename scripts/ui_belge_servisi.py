@@ -264,11 +264,43 @@ def ozet(token):
     }
 
 
-def listele(kaynak_turu="belge"):
+def listele(kaynak_turu="belge", aktor=None, faaliyetler=None, yonetici=False):
+    """List queue items subject to owner/activity scope filtering.
+
+    The historical no-argument call remains an internal full list. HTTP callers
+    must pass the authenticated actor and scope; only CFO/OWNER callers may
+    intentionally request the complete queue.
+    """
+    aktor_norm = str(aktor or "").strip().casefold()
+    kapsam = {str(x).strip().casefold() for x in (faaliyetler or [])}
     with _LOCK:
-        sonuc = [ozet(t) for t, x in _BEKLEYEN.items()
-                 if kaynak_turu is None or x.get("kaynak_turu", "belge") == kaynak_turu]
+        sonuc = []
+        for token, item in _BEKLEYEN.items():
+            if kaynak_turu is not None and item.get("kaynak_turu", "belge") != kaynak_turu:
+                continue
+            hazir = item.get("hazir") or {}
+            firma = str(hazir.get("firma_key") or "").strip().casefold()
+            if not yonetici and aktor_norm and str(item.get("aktor") or "").strip().casefold() != aktor_norm:
+                continue
+            if kapsam and "*" not in kapsam and firma not in kapsam:
+                continue
+            sonuc.append(ozet(token))
     return sorted(sonuc, key=lambda x: x["olusturma"], reverse=True)
+
+
+def belge_erisim_izinli(token, aktor, *, yonetici=False, faaliyetler=None):
+    """Check queue ownership and activity scope before mutating a draft."""
+    with _LOCK:
+        item = _BEKLEYEN.get(str(token or ""))
+        if not item:
+            return False
+        kapsam = {str(x).strip().casefold() for x in (faaliyetler or [])}
+        firma = str((item.get("hazir") or {}).get("firma_key") or "").strip().casefold()
+        if kapsam and "*" not in kapsam and firma not in kapsam:
+            return False
+        if yonetici:
+            return True
+        return str(item.get("aktor") or "").strip().casefold() == str(aktor or "").strip().casefold()
 
 
 def sohbet_taslagi_duzelt(token, duzeltme, aktor):
