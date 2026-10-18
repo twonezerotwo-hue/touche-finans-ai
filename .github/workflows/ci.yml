@@ -41,7 +41,7 @@ jobs:
       - name: Verify test paths are isolated
         run: python -m pytest -q tests/test_test_izolasyonu.py
       - name: Run isolated test suite
-        run: python -m pytest -q
+        run: python -m pytest -q -rs
       - name: Ruff baseline (reported, not application rewrite)
         continue-on-error: true
         run: python -m ruff check scripts tests

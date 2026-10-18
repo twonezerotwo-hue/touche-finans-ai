@@ -2,7 +2,7 @@
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest -q                      # whole suite (~40 s)
+python -m pytest -q -rs                   # whole suite with explicit skip reasons
 ruff check scripts tests --select F,E9   # lint used in this repo
 python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_defter_mutabakati.py \
     scripts/cfo_niyet.py scripts/cfo_sohbet.py scripts/cfo_sorgu.py scripts/cfo_varliklar.py \
