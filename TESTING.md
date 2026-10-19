@@ -188,6 +188,14 @@ Status labels: **ENGINEERING_TESTED** = disposable fixture/contract,
 OneDrive/Excel/KMS/provider, **OWNER_APPROVAL_REQUIRED** = key custody,
 escrow, retention, scheduler and restore authorization.
 
+## PR-15 final acceptance
+
+`tests/test_finance_v2_final_acceptance.py` sentetik uçtan uca finans akışını,
+Türkçe korpus güvenli ayrımını, invalid approval/corrupt vault fail-closed
+davranışını ve parser latency regresyon alarmını doğrular. Focused sonuç
+**4 passed**. Gerçek Ollama/Qwen inference, gerçek Excel/OneDrive ve canlı
+KMS/provider bu kabulde çalıştırılmadı: **NOT VERIFIED**.
+
 ## PR-12 CFO + belge UX v2
 
 `ui/onboarding.js` ilk kullanım turunu finansal veriden bağımsız yürütür. Tur;
