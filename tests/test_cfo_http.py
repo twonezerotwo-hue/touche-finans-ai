@@ -5,6 +5,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
@@ -183,10 +184,29 @@ class CfoHttpTestleri(CfoTestTemeli):
         st, e = self.req("GET", "/api/proje-detay?faaliyet=gursar_mimarlik&proje=Yok")
         self.assertEqual(st, 400)
 
+    def test_http_dashboard_provenance_formula_sources_pagination_and_scope(self):
+        cekirdek.finans_kaydi_yaz({"belge_id": "PROV-1", "firma_key": "gursar_mimarlik", "tur": "finans_belgesi",
+                                   "veri": {"kayitlar": [{"Tarih": "2026-09-01", "Islem_Turu": "Usta/Tedarikçi Ödemesi",
+                                                              "Tutar": 10_000, "PB": "TL", "Kur": 1, "Cari": "Devrim",
+                                                              "Proje": "Göktürk Okulu", "Hesap_Kasa": "Gürsar TL Banka"}]}}, "t")
+        st, d = self.req("GET", "/api/dashboard/provenance?metric=payments&faaliyet=gursar_mimarlik&page_size=1")
+        self.assertEqual(st, 200, d)
+        self.assertEqual(d["metric_id"], "payments")
+        self.assertIn("Ödeme =", d["formula"])
+        self.assertIn(d["reconciliation_status"], {"CONSISTENT", "INCONSISTENT", "PARTIALLY_VERIFIED"})
+        self.assertEqual(d["source_transactions"][0]["excel_record_id"], "PROV-1")
+        self.assertEqual(d["pagination"]["page_size"], 1)
+        self._kimlik("prov-viewer@x", "PROJECT_MANAGER", ["gursar_mimarlik"])
+        st, _ = self.req("GET", "/api/dashboard/provenance?metric=payments&faaliyet=touche_holding", kimlik="prov-viewer@x")
+        self.assertEqual(st, 403)
+        self._kimlik("prov-project@x", "PROJECT_MANAGER", ["gursar_mimarlik"], ["Sadece Yetkili Proje"])
+        st, _ = self.req("GET", "/api/dashboard/provenance?metric=payments&faaliyet=gursar_mimarlik&proje=" + quote("Göktürk Okulu"), kimlik="prov-project@x")
+        self.assertEqual(st, 403)
+
     # --- yetki ve kapsam ---
-    def _kimlik(self, kimlik, rol, faaliyetler):
+    def _kimlik(self, kimlik, rol, faaliyetler, projeler=None):
         ui_yetki._kaydet(ui_yetki._yukle() | {kimlik})
-        ui_yetki.rol_ata(kimlik, rol, faaliyetler)
+        ui_yetki.rol_ata(kimlik, rol, faaliyetler, projeler)
 
     def test_http_viewer_taslak_olusturamaz(self):
         self._kimlik("v@x", "VIEWER", ["*"])
