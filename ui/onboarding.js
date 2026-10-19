@@ -27,7 +27,9 @@
     if (!force && localStorage.getItem(KEY)) return;
     index = 0;
     render();
-    if (!dialog().open) dialog().showModal();
+    // Non-modal tur: kullanıcı uygulamayı kullanırken ilgili kategoriye
+    // tıklamaya devam edebilir; tur yalnızca sağ üstte yardımcı bir paneldir.
+    if (!dialog().open) dialog().show();
   }
   document.addEventListener("DOMContentLoaded", () => {
     $("onboardingNext").addEventListener("click", () => {
@@ -35,7 +37,9 @@
     });
     $("onboardingSkip").addEventListener("click", () => close(false));
     $("onboardingHelp")?.addEventListener("click", () => open(true));
+    $("cfoNav")?.addEventListener("click", (event) => {
+      if (event.target.closest("button[data-view]")) open(false);
+    });
     window.ToucheOnboarding = { open: () => open(true) };
-    open(false);
   });
 })();

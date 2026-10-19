@@ -25,6 +25,13 @@ class OnboardingContractTests(unittest.TestCase):
         self.assertIn('"/onboarding.js": "onboarding.js"', server)
         self.assertIn('<script src="/onboarding.js" defer></script>', self.html)
 
+    def test_tur_kategori_girisinde_modal_olmayan_paneli_acar(self):
+        self.assertIn('$("cfoNav")?.addEventListener("click"', self.js)
+        self.assertIn('button[data-view]', self.js)
+        self.assertIn('dialog().show()', self.js)
+        self.assertNotIn('dialog().showModal()', self.js)
+        self.assertNotIn('open(false);\n  });\n})();', self.js)
+
 
 if __name__ == "__main__":
     unittest.main()
