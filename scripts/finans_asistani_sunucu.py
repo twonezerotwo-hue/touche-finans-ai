@@ -7,6 +7,7 @@ import json
 import logging
 import mimetypes
 import os
+import sqlite3
 import sys
 from email.parser import BytesParser
 from email.policy import default as email_policy
@@ -48,6 +49,7 @@ import fpa_ileri  # noqa: E402
 import yetki as rol_yetki  # noqa: E402
 import veri_katmani  # noqa: E402
 import ai_cfo  # noqa: E402
+import finans_provenance  # noqa: E402
 import raporlar  # noqa: E402
 from ai_cfo import insights_uret  # noqa: E402
 from belge_pipeline import kuyruk_durumu, kuyruga_ekle, kuyruk_erisim_izinli, pipeline_calistir  # noqa: E402
@@ -454,6 +456,13 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return faaliyet in kapsam
 
+    def _proje_kapsam_izinli(self, session, proje) -> bool:
+        """Faaliyet yetkisine ek olarak tanimli proje kapsamini uygular."""
+        kapsam = session.get("projeler")
+        if not kapsam or "*" in kapsam:
+            return True
+        return bool(proje) and proje in kapsam
+
     def _faaliyet_q(self, q, session):
         faaliyet = self._faaliyet_param(q)
         if not self._kapsam_izinli(session, faaliyet):
@@ -499,6 +508,38 @@ class Handler(BaseHTTPRequestHandler):
             return {"insights": insights_uret(self._faaliyet_q(q, session))}
         if path == "/api/ai-cfo/baglam":
             return ai_cfo.cfo_baglam(self._faaliyet_q(q, session))
+        if path == "/api/dashboard/provenance":
+            """Metrik aciklamasi: yalniz guvenli metrik sozlugu ve defter kaynaklari."""
+            faaliyet = self._faaliyet_q(q, session)
+            proje = (q.get("proje") or [None])[0]
+            if proje and not self._proje_kapsam_izinli(session, proje):
+                raise PermissionError("Bu proje için yetkiniz yok.")
+            metric = (q.get("metric") or [""])[0]
+            try:
+                key = finans_provenance.normalize_metric(metric)
+                page = int((q.get("page") or [1])[0])
+                page_size = int((q.get("page_size") or [25])[0])
+            except (ValueError, TypeError):
+                return {"hata": "Geçersiz veya desteklenmeyen metrik."}
+            # Mutabakat bozulduysa kaynağı göstermeye devam ederiz; ancak durum
+            # açıkça INCONSISTENT olur ve bu endpoint hiçbir otomatik düzeltme yapmaz.
+            comparison = None
+            try:
+                import excel_defter_mutabakati as mutabakat
+                rapor = mutabakat.kontrol()
+                if not rapor.get("tutarli"):
+                    comparison = {"status": "INCONSISTENT", "issues": {
+                        "missing": len(rapor.get("eksik_defterde", [])),
+                        "amount_mismatch": len(rapor.get("tutar_farki", [])),
+                        "ledger_only": len(rapor.get("defterde_fazla", [])),
+                    }}
+            except (OSError, ValueError, RuntimeError, KeyError, sqlite3.Error) as exc:  # pragma: no cover
+                comparison = {"status": "PARTIALLY_VERIFIED", "detail": str(exc)[:180]}
+            return finans_provenance.from_database(
+                key, faaliyet=faaliyet or None, proje=proje,
+                bas=(q.get("baslangic") or [None])[0], bit=(q.get("bitis") or [None])[0],
+                page=page, page_size=page_size, comparison=comparison,
+            )
         if path == "/api/rapor":
             ad = (q.get("ad") or [""])[0]
             kapsam = {"faaliyet": self._faaliyet_q(q, session)}

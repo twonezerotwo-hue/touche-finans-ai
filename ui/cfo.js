@@ -308,12 +308,53 @@
   const DNA = "DATA_NOT_AVAILABLE";
 
   /* Metrik sozlugu {durum, metin, aciklama} -> KPI karti. Hesaplanamayan metrik uydurulmaz. */
+  const METRIC_ID = {
+    "Kazanılan gelir": "revenue", "Tahsil edilen": "collections", "Kalan alacak": "receivables",
+    "Gider (maliyet)": "expenses", "Ödenen": "payments", "Açık borç": "payables",
+    "Kâr / zarar": "profit", "Net nakit": "net_cash", "Sözleşme / gelir değeri": "revenue",
+  };
+  function provenanceScope(kart) {
+    const scope = kart.closest("[data-faaliyet]");
+    const project = kart.closest("[data-proje]");
+    return { faaliyet: scope ? scope.getAttribute("data-faaliyet") : faaliyet(), proje: project && project.getAttribute("data-proje") };
+  }
+  function provenancePanel(result, host, metricId, scope) {
+    const panel = el("div", { class: "cfo-provenance-panel", "data-provenance": metricId });
+    panel.appendChild(el("div", { class: "cfo-provenance-head", text: `${result.metric_name} · ${result.reconciliation_status}` }));
+    panel.appendChild(el("p", { class: "cfo-sub", text: `Formül: ${result.formula}` }));
+    if (result.warning) panel.appendChild(el("div", { class: "cfo-insight WARNING", text: result.warning }));
+    const rows = (result.source_transactions || []).map((s) => `${s.date || "tarih yok"} · ${s.counterparty || "cari yok"} · ${s.amount_kurus / 100} TL · ${s.voucher_id || "fiş yok"}`);
+    panel.appendChild(el("p", { class: "cfo-sub", text: `Kaynak: ${result.source_count} işlem · Gösterilen sayfa ${result.pagination.page}/${Math.max(1, result.pagination.pages)}` }));
+    if (rows.length) panel.appendChild(el("ul", { class: "cfo-provenance-list" }, rows.map((x) => el("li", { text: x }))));
+    else panel.appendChild(el("p", { class: "cfo-sub", text: "Bu metrik için kaynak işlem bulunamadı." }));
+    const pages = result.pagination.pages || 1;
+    if (pages > 1) {
+      const bar = el("div", { class: "cfo-toolbar" });
+      if (result.pagination.page > 1) bar.appendChild(el("button", { class: "ghost", type: "button", text: "Önceki", onclick: () => loadProvenance(host, metricId, scope, result.pagination.page - 1) }));
+      if (result.pagination.page < pages) bar.appendChild(el("button", { class: "ghost", type: "button", text: "Sonraki", onclick: () => loadProvenance(host, metricId, scope, result.pagination.page + 1) }));
+      panel.appendChild(bar);
+    }
+    host.appendChild(panel);
+  }
+  async function loadProvenance(host, metricId, scope, page) {
+    host.querySelector("[data-provenance]")?.remove();
+    const qs2 = new URLSearchParams({ metric: metricId, faaliyet: scope.faaliyet || "tum", page: String(page), page_size: "10" });
+    if (scope.proje) qs2.set("proje", scope.proje);
+    try { provenancePanel(await api("/api/dashboard/provenance?" + qs2.toString()), host, metricId, scope); }
+    catch (err) { host.appendChild(el("div", { class: "cfo-error", text: `Kanıt yüklenemedi: ${err.message}` })); }
+  }
   function metrikKarti(baslik, m, ek) {
     const yok = !m || m.durum === DNA;
     const kart = kpiCard(baslik, yok ? DNA : m.metin, (m && m.aciklama) || ek || "");
     kart.setAttribute("data-metrik", baslik);
     if (yok) kart.classList.add("cfo-kpi-yok");
     kart.classList.add("cfo-card-static");
+    const metricId = METRIC_ID[baslik];
+    if (metricId) {
+      const button = el("button", { type: "button", class: "ghost cfo-evidence-button", text: "Kaynağı gör" });
+      button.addEventListener("click", () => loadProvenance(kart, metricId, provenanceScope(kart), 1));
+      kart.appendChild(button);
+    }
     return kart;
   }
   function metrikIzgarasi(mt, sozlesme) {
@@ -421,6 +462,7 @@
   /* ---------- FAALIYET DETAY ---------- */
   kayit("faaliyetdetay", async (root, params) => {
     const [key] = params;
+    root.setAttribute("data-faaliyet", key);
     const d = await api("/api/faaliyet-detay?faaliyet=" + encodeURIComponent(key));
     root.appendChild(kirinti({ metin: "Holding", git: "#/holding" }, { metin: d.faaliyet }));
     root.appendChild(el("h2", { text: d.faaliyet, "data-baslik": "faaliyet" }));
@@ -463,6 +505,8 @@
   /* ---------- PROJE DETAY ---------- */
   kayit("projedetay", async (root, params) => {
     const [key, proje] = params;
+    root.setAttribute("data-faaliyet", key);
+    root.setAttribute("data-proje", proje);
     const d = await api("/api/proje-detay?faaliyet=" + encodeURIComponent(key) + "&proje=" + encodeURIComponent(proje));
     root.appendChild(kirinti({ metin: "Holding", git: "#/holding" }, { metin: d.faaliyet, git: hashFaaliyet(d.faaliyet_key) }, { metin: d.proje }));
     root.appendChild(el("h2", { text: d.proje, "data-baslik": "proje" }));
