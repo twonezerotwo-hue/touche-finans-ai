@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """CFO sohbet yonlendiricisi (HTTP'den bagimsiz, test edilebilir).
 
 /api/chat mesajini su sirayla ele alir ve ele almazsa ``None`` doner (mevcut hat devam eder):
@@ -14,6 +13,7 @@ from __future__ import annotations
 
 import re
 
+import cfo_intelligence as CI
 import cfo_niyet as N
 import cfo_sohbet
 import cfo_sorgu
@@ -108,6 +108,26 @@ def sohbet_isle(body: dict, oturum: dict, rol: str, katalog=None, bugun=None):
         return cfo_sorgu.cevapla(soru, katalog, bugun, aktor)          # None -> mevcut danisman
     if n.tur != "KAYIT":
         return None
+    # Birden fazla finansal işlem içeren mesajlar tek kalıba zorlanmaz.
+    # Her maddeyi görünür kıl, eksik alan varsa sor ve mevcut onay akışına
+    # geçirilmeden önce kullanıcıdan bağımsız onay bekle. Burada yazma yoktur.
+    zeka = CI.analyze(soru, katalog, bugun)
+    if len(zeka.proposals) > 1:
+        satirlar = []
+        for sira, teklif in enumerate(zeka.proposals, 1):
+            satirlar.append(
+                f"{sira}) {teklif.activity or 'Faaliyet eksik'} · "
+                f"{teklif.project or 'Proje eksik'} · {teklif.counterparty or 'Cari eksik'} · "
+                f"{teklif.amount or 'Tutar eksik'} {teklif.currency or ''}"
+            )
+        if zeka.clarification:
+            cevap = "Mesajı ayrı işlem taslaklarına ayırdım. Önce şu bilgileri netleştirelim:\n- " + "\n- ".join(zeka.clarification)
+        else:
+            cevap = "Mesajı bağımsız işlem taslaklarına ayırdım. Her satır ayrı doğrulanıp onaylanmalıdır.\n"
+        cevap += "\n" + "\n".join(satirlar) + "\nOnaydan önce Excel ve SQLite'a hiçbir şey yazılmadı."
+        return {"cevap": cevap, "niyet": "coklu_kayit_taslagi", "llm": "deterministik",
+                "guven": "Yüksek", "cfo_intelligence": zeka.as_dict(),
+                "kanitlar": [], "aksiyonlar": [], "degisiklik_yapildi": False}
     if n.desteklenmeyen:
         return {"cevap": n.desteklenmeyen + " Excel'e hiçbir şey yazılmadı.", "niyet": "cfo_desteklenmiyor",
                 "llm": "deterministik", "guven": "Yüksek", "kanitlar": [], "aksiyonlar": [], "degisiklik_yapildi": False}

@@ -113,7 +113,21 @@ Examples (all tested): `Göktürk okulunda ne kadar ödeme yaptık?` · `Göktü
 A metric that cannot be derived is shown as `DATA_NOT_AVAILABLE` (e.g. margin when revenue is zero). Contract value is
 the sum of **approved** work items only (drafts excluded).
 
-## 4. Not supported / known limits
+## 4. PR-11 intelligence contract
+
+`scripts/cfo_intelligence.py` deterministik bir güvenlik sözleşmesidir. Mesajı
+`READ_ONLY_QUERY`, `FINANCIAL_DRAFT_REQUEST`, `REPORT_REQUEST`,
+`CORRECTION_REQUEST`, `CANCELLATION_REQUEST`, `CLARIFICATION_REQUIRED` veya
+`UNSUPPORTED_REQUEST` olarak sınıflandırır. Çoklu işlem metinlerini bağımsız
+taslak maddelerine ayırır; ortak faaliyet/proje bağlamını yalnızca açıkça
+taşınabilir alanlarda korur, cari ve tutarı sessizce taşımaz. Eksik veya
+belirsiz madde varsa `safe_to_draft=False` döner ve kalıcı yazma yapılmaz.
+
+Sürüm kontrollü sentetik komut korpusu `tests/fixtures/cfo_turkish_commands.v1.json`
+ile test edilir. Router, çoklu maddeleri Excel/SQLite'a yazmadan önce görünür
+taslak olarak döndürür; her madde mevcut onay akışına ayrı alınmalıdır.
+
+## 5. Not supported / known limits
 * Transfers, corrections and reversals from chat (explained, with the right screen).
 * Splitting one payment across several work items or counterparties in one sentence, or several records in one sentence
   (`Devrim'e 10 bin, Sebahattin'e 5 bin ödedik` is handed to the legacy path).
