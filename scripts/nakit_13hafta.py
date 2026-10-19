@@ -28,16 +28,23 @@ def _hafta_basi(gun: date) -> date:
 
 def _kirilim(faaliyet, bas, son):
     veritabani_hazirla()
-    where, args = ["f.tarih BETWEEN ? AND ?"], [bas.isoformat(), son.isoformat()]
+    # Forecast penceresi işlem tarihine değil nakit olayının vadesine göre
+    # kurulmalıdır.  Eski bir faturanın vadesi gelecek 13 haftadaysa, fatura
+    # daha önce kesilmiş olsa bile projeksiyona dahil edilir.
+    where, args = ["substr(TRIM(COALESCE(f.vade,'')),1,10) BETWEEN ? AND ?"], [
+        bas.isoformat(), son.isoformat()
+    ]
     if faaliyet and faaliyet not in {"tum", "touche_holding"}:
         where.append("f.faaliyet_key=?")
         args.append(faaliyet)
+    where_sql = " AND ".join(where)
     with baglanti() as con:
         rows = con.execute(
             "SELECT f.vade, s.hesap_kodu, s.borc_kurus, s.alacak_kurus FROM fisler f "
             "JOIN fis_satirlari s ON s.fis_id=f.fis_id WHERE s.hesap_kodu IN (" +
             ",".join("?" for _ in _HESAPLAR) + ") AND TRIM(COALESCE(f.vade,''))<>'' AND " +
-            " AND ".join(where),
+            "COALESCE(UPPER(f.durum),'AKTIF') NOT IN ('IPTAL','İPTAL','REVERSED') AND " +
+            where_sql,
             [*_HESAPLAR, *args],
         ).fetchall()
     return rows

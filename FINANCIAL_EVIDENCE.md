@@ -45,3 +45,14 @@ hiçbir onay, Excel yazımı veya finansal kayıt oluşturmaz.
 Merkezi defterde TL'ye normalize edilen tutarlar TL olarak raporlanır; kaynak
 para birimi ve kullanılan kur varsa kanıt satırında korunur. Gerçek OneDrive
 senkronizasyon davranışı bu sentetik test kapsamının dışındadır.
+
+## PR-16 deterministik LLM kanıt kapısı
+
+LLM yalnızca merkezi defterden üretilen yapılandırılmış kanıt paketini
+açıklayabilir. `scripts/finans_provenance.py` içindeki doğrulayıcı, yanıt ve
+kanıt satırlarındaki para birimli iddiaları yetkili kanıt tutarlarıyla; voucher
+ve belge kimliklerini de aynı paketteki sabit kimliklerle karşılaştırır.
+Desteksiz tutar veya bilinmeyen kimlik görülürse model metni gösterilmez,
+deterministik CFO yanıtına geri dönülür ve olay loglanır. Bu kapı hesaplama
+motorunun yerine geçmez; yanlış bir LLM açıklamasının finansal gerçek gibi
+sunulmasını engeller.
