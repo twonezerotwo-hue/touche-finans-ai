@@ -136,3 +136,12 @@ ve rollback onayı değildir.
 Üretim öncesi manuel kararlar: KMS/escrow sahibi, retention ve snapshot scheduler
 onayı, off-site hesap kurulumu, restore yetkilisi, gerçek Windows/Excel ve
 OneDrive test ortamı. Hiçbiri bu çalışmada etkinleştirilmedi.
+
+## PR-15 final acceptance
+
+`tests/test_finance_v2_final_acceptance.py` son finans işleminin encrypted
+snapshot'a alınmasını, off-site emulator manifest/hash doğrulamasını, boş yeni
+hedefe restore'u ve SQLite integrity kontrolünü birlikte doğrular: **PASS**.
+Bu, üretim restore/RPO/RTO garantisi değildir. Gerçek KMS, off-site hesap,
+OneDrive/Excel, key escrow ve owner recovery kararı **PRODUCTION_NOT_VERIFIED /
+OWNER_APPROVAL_REQUIRED** durumundadır.

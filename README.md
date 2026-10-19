@@ -249,4 +249,12 @@ kapanış, senaryo seviyeleri, duplicate, yetki, FX, MAPE).
 `.env.example`'a bakın (`.env` olarak kopyalayın). Gerçek secret **commit edilmez**;
 `.gitignore` `.env`, `*.xlsx`, `*.db`, `loglar/`, `veri/` gibi tüm gizli/finansal veriyi dışlar.
 
+## Final acceptance boundary
+
+PR-15 sentetik kabulü, CFO komutundan onaylı finansal posting, provenance,
+şifreli snapshot ve izole restore'a kadar olan zinciri doğrular. Full CI ve
+operasyon testleri geçse de gerçek Excel/OneDrive/KMS/off-site altyapısı ve
+Ollama model inference'ı bu depoda **NOT VERIFIED** kalır; kontrollü üretim
+dağıtımı için ayrıca owner onayı gerekir.
+
 

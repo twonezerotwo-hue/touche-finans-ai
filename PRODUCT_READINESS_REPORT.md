@@ -205,3 +205,39 @@ değildir; OneDrive senkronizasyonu ve off-site provider **NOT VERIFIED**.
 Migration/rollback provası sentetik olduğu için canlı schema rollback'i,
 production identity/Tailscale, KMS anahtar sahipliği ve owner onayı ayrıca
 gereklidir. Yeni kanıtlarla skor artırılmadı: **91/100 = 9.1/10**.
+
+## PR-15 final acceptance addendum (2026-10-19)
+
+`test/finance-v2-final-acceptance` dalındaki `tests/test_finance_v2_final_acceptance.py`
+sentetik uçtan uca zinciri tekrar kanıtladı: Türkçe komut → deterministik niyet
+ve alan çıkarımı → eksik alan netleştirme → parola onayı → durable journal →
+Excel/SQLite → provenance → şifreli vault → off-site emulator → boş klasöre
+restore → integrity check. Yeni paket **4 focused PASS** verdi. Gerçek model
+çıkarımı yapılmadı; testler ağ/LLM çağrısını kapatır.
+
+| Gereksinim | Kanıt | Durum | Sınır |
+|---|---|---|---|
+| Finansal workflow ve provenance | PR-15 E2E + PR-13 testleri | PASS / ENGINEERING_TESTED | Üretim veri kümesi yok |
+| Onaysız/tekrar/corrupt vault güvenliği | PR-15 + PR-06/09 | PASS | Canlı kimlik sağlayıcı yok |
+| Encrypted backup/off-site | PR-14 operasyon testleri | PASS / SANDBOX_VERIFIED | Gerçek provider/KMS yok |
+| Windows/Ubuntu CI | Post-merge CI `39235017938` | PASS | Üretim Excel'i değildir |
+| LLM/Qwen gerçek inference | — | NOT VERIFIED | Ollama/Qwen bu kabulde kapalı |
+| OneDrive/Excel desktop | — | NOT VERIFIED | Owner-authorized isolated account gerekli |
+
+### Güncellenmiş doğrulanmış skor
+
+| Alan | Ağırlık | Skor |
+|---|---:|---:|
+| Finansal doğruluk | 20% | 19/20 |
+| İşlem bütünlüğü | 20% | 19/20 |
+| Güvenlik | 15% | 14/15 |
+| Backup ve recovery | 15% | 15/15 |
+| Test ve CI | 10% | 10/10 |
+| CFO işlevleri | 10% | 8/10 |
+| Kullanıcı deneyimi | 5% | 4/5 |
+| Operasyon | 5% | 3/5 |
+| **Toplam** | **100%** | **92/100 = 9.2/10** |
+
+Son karar: **NOT_FULLY_VERIFIED**. 9.9/10 iddiası yapılmadı; gerçek
+OneDrive/Excel, canlı KMS/off-site, Ollama model sürümü/latansı, owner politika
+imzası ve kontrollü üretim rollout'u hâlâ ön koşuldur.

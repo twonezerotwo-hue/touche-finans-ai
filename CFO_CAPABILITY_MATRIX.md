@@ -144,3 +144,12 @@ taslak olarak döndürür; her madde mevcut onay akışına ayrı alınmalıdır
 parolalı onaya, Excel/SQLite defterine, rapora ve bağımsız recovery vault dry-run'a
 ulaştığı yolu sentetik olarak doğrular. Aynı tutarlı farklı belgeler ayrı tutulur;
 aynı belge tekrarında idempotency korunur. Test, gerçek LLM veya ağ çağrısı yapmaz.
+
+## PR-15 final acceptance evidence
+
+`tests/test_finance_v2_final_acceptance.py` aynı sözleşmeyi tek senaryoda
+provenance, off-site emulator, encrypted vault restore ve SQLite integrity
+kontrolüne kadar yürütür (sentetik **PASS**). Türkçe korpus fixture'ı deterministik
+niyet sınıflandırmasını ve sorguların hiçbir taslak/yazma açmamasını doğrular.
+Parser latency ölçümü yalnız regresyon alarmıdır; üretim kapasitesi değildir.
+Gerçek Ollama/Qwen inference bu kabulde çalıştırılmadı (**NOT VERIFIED**).

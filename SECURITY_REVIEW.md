@@ -93,3 +93,10 @@ copy beklenen hedef hash'i değiştiğinde fail-closed davranır ve hedefi ezmez
 Gerçek sağlayıcı güvenlik politikası, immutable retention, TLS/IAM, key escrow,
 OneDrive ve Excel desktop davranışı **PRODUCTION_NOT_VERIFIED**; owner onayı
 gereken KMS/escrow/restore işlemleri **OWNER_APPROVAL_REQUIRED** durumundadır.
+
+## PR-15 final security acceptance
+
+Sentetik kabul paketi invalid approval token, bozuk vault, read-only corpus
+sorguları ve provenance kapsamını geçirdi; finansal yazma yalnız mevcut
+onay/journal hattından yapıldı (**PASS**). Gerçek model, proxy/Tailscale,
+OneDrive, KMS/escrow ve canlı kimlik sağlayıcısı kullanılmadı (**NOT VERIFIED**).

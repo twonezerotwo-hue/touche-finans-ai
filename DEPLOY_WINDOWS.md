@@ -258,3 +258,11 @@ silinmedi.
 
 Bu maddeler tamamlanmadan üretim servisi başlatılmamalıdır. Bu PR hiçbir canlı
 komut çalıştırmadı.
+
+## PR-15 final acceptance boundary
+
+PR-15 sentetik kabulü ve post-merge CI, mühendislik kanıtıdır. Gerçek Excel
+desktop share-mode, OneDrive cloud sync, KMS/off-site provider ve production
+rollout **NOT VERIFIED** olarak kalır. Bu kontroller için owner-authorized
+sentetik hesap/klasör, yazılı key custody ve ayrı rollout onayı gerekir; bu
+dalda canlı servis başlatılmaz.

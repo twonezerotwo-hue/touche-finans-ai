@@ -143,3 +143,9 @@ PR-03 journal/recovery, PR-04 bağımsız şifreli vault, PR-05 RBAC ve PR-06 u�
 uca sentetik kabul sözleşmesi main üzerinde birlikte çalışır. `/api/health`
 bekleyen recovery, NEEDS_REVIEW veya audit onarım kuyruğu varsa `degraded`
 döner; bu durum raporlamanın tamamen sağlıklı olduğu izlenimini engeller.
+
+PR-15 final acceptance sentetik akışı, intent/proposal katmanının kalıcı yazma
+yapmadığını; yazmanın yalnız onaylı journal/Excel/SQLite akışıyla gerçekleştiğini
+ve provenance ile encrypted restore adımlarının aynı kanıt zincirinde yer aldığını
+doğrular. Gerçek OneDrive, Excel desktop, KMS ve Ollama üretim davranışı bu
+mimari dokümanda **PRODUCTION_NOT_VERIFIED** olarak kalır.
