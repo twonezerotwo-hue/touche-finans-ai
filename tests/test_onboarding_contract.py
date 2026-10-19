@@ -20,6 +20,11 @@ class OnboardingContractTests(unittest.TestCase):
         self.assertNotIn("/api/", self.js)
         self.assertIn("localStorage", self.js)
 
+    def test_tur_asseti_sunucu_whitelistinde(self):
+        server = (self.root / "scripts" / "finans_asistani_sunucu.py").read_text(encoding="utf-8")
+        self.assertIn('"/onboarding.js": "onboarding.js"', server)
+        self.assertIn('<script src="/onboarding.js" defer></script>', self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

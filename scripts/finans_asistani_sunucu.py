@@ -272,6 +272,7 @@ class Handler(BaseHTTPRequestHandler):
         dosya = {
             "/": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/favicon.svg": "favicon.svg",
             "/cfo.js": "cfo.js", "/cfo.css": "cfo.css", "/i18n.js": "i18n.js",
+            "/onboarding.js": "onboarding.js",
         }.get(parsed.path)
         if dosya:
             yol = UI_DIR / dosya
