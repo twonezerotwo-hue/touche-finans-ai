@@ -28,3 +28,14 @@ kalır. Bu değerler 99% model olgunluğu iddiası değildir.
 ```powershell
 py -3.12 -m pytest -q tests/test_premium_cfo_evaluation.py
 ```
+
+## PR-18: çok turlu Türkçe bağlam güvenliği
+
+`cfo_intelligence.ConversationContext` ve `analyze_turn`, ikinci mesajın
+önceki faaliyet/proje/cari bilgisini sessizce devralmasını engeller. Bağlam
+yalnızca kullanıcı açıkça “aynı proje”, “bu faaliyet”, “bu cari” gibi bir
+gönderim yaptığında ve ilgili alan doğrulanmış önceki taslaktan geldiyse
+kullanılır. Yeni bir proje adı yazılırsa önceki proje değiştirilmez; bağlam
+kullanılmaz ve katalog çözümlemesi/eksik alan sorusu çalışır.
+`clarification_questions` eksik alanları uygulanabilir Türkçe sorulara çevirir.
+Bu katman salt çözümleme yapar; Excel, SQLite veya onay kuyruğuna yazmaz.

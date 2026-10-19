@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const money = new Intl.NumberFormat("tr-TR", {style:"currency", currency:"TRY", maximumFractionDigits:2});
-const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, activeDraftToken:null, cfoTaslak:null, renderedDocumentTokens:new Set()};
+const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, cfoContext:null, activeDraftToken:null, cfoTaslak:null, renderedDocumentTokens:new Set()};
 
 function formatAmount(value,currency="TL"){
   const amount=Number(value||0);const code=String(currency||"TL").trim().toUpperCase();
@@ -251,8 +251,8 @@ async function ask(question,parola=null,tekrar=false){
   if(!tekrar){$("soru").value="";addMessage(q,"user");}
   const loading=addMessage("Defter, vadeler ve risk göstergeleri analiz ediliyor…","assistant","loading");$("gonder").disabled=true;setAIStatus("Yerel model analiz ediyor",true);$("aiEvidence").hidden=true;
   try{
-    const d=await jsonRequest("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({soru:q,faaliyet:$("faaliyet").value,profil:profile(),llm:true,onceki_niyet:state.lastIntent,onceki_soru:state.lastContextQuestion,aktif_taslak:state.activeDraftToken,cfo_taslak:state.cfoTaslak,parola})});
-    loading.remove();addMessage(d.cevap,"assistant");if(d.kayit_taslagi)renderChatDraft(d.kayit_taslagi);if(d.taslak_kapat)state.activeDraftToken=null;cfoYanitiIsle(d);renderEvidence(d);state.lastIntent=d.niyet||null;state.lastContextQuestion=d.baglam_sorusu||q;
+    const d=await jsonRequest("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({soru:q,faaliyet:$("faaliyet").value,profil:profile(),llm:true,onceki_niyet:state.lastIntent,onceki_soru:state.lastContextQuestion,cfo_context:state.cfoContext,aktif_taslak:state.activeDraftToken,cfo_taslak:state.cfoTaslak,parola})});
+    loading.remove();addMessage(d.cevap,"assistant");if(d.kayit_taslagi)renderChatDraft(d.kayit_taslagi);if(d.taslak_kapat)state.activeDraftToken=null;if(d.cfo_context)state.cfoContext=d.cfo_context;cfoYanitiIsle(d);renderEvidence(d);state.lastIntent=d.niyet||null;state.lastContextQuestion=d.baglam_sorusu||q;
     if(d.degisiklik_yapildi)await Promise.all([loadDashboard(),loadProjectItems()]);
     if(d.parola_gerekli&&d.kayit_taslagi_token)await chatDraftAction(d.kayit_taslagi_token,"onay");
     else if(d.parola_gerekli&&d.tekrar_sorusu){const yeniParola=await requestApprovalPassword();if(yeniParola!==null)await ask(d.tekrar_sorusu,yeniParola,true);}

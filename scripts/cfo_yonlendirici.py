@@ -70,6 +70,10 @@ def sohbet_isle(body: dict, oturum: dict, rol: str, katalog=None, bugun=None):
     aktif_token = str(body.get("aktif_taslak") or "").strip()
     cfo_id = str(body.get("cfo_taslak") or "").strip()
     katalog = katalog or cfo_varliklar.katalog_yukle()
+    # Çok turlu bağlam yalnızca kullanıcı açıkça "aynı proje/bu cari" dediğinde
+    # genişletilir. Değerler katalogla yeniden çözümlenir; kalıcı yazma yoktur.
+    context = CI.ConversationContext.from_mapping(body.get("cfo_context"))
+    expanded_soru, _context_used = CI.expand_with_context(soru, context)
 
     # 1) Onay bekleyen sihirbaz taslagini deterministik duzelt
     if aktif_token and sade.startswith("duzelt"):
@@ -103,7 +107,8 @@ def sohbet_isle(body: dict, oturum: dict, rol: str, katalog=None, bugun=None):
         if not rol_yetki.izin_var(rol, "belge.yukle"):
             return _yetki_yok()
         return cfo_sohbet.baslat(bos_baslangic, aktor, katalog, bugun=bugun, kapsam=_kapsam(oturum))
-    n = N.analiz_et(soru, katalog, bugun)
+    n = N.analiz_et(expanded_soru, katalog, bugun)
+    n.metin = soru
     if n.tur == "SORGU":
         return cfo_sorgu.cevapla(soru, katalog, bugun, aktor)          # None -> mevcut danisman
     if n.tur != "KAYIT":
@@ -111,7 +116,7 @@ def sohbet_isle(body: dict, oturum: dict, rol: str, katalog=None, bugun=None):
     # Birden fazla finansal işlem içeren mesajlar tek kalıba zorlanmaz.
     # Her maddeyi görünür kıl, eksik alan varsa sor ve mevcut onay akışına
     # geçirilmeden önce kullanıcıdan bağımsız onay bekle. Burada yazma yoktur.
-    zeka = CI.analyze(soru, katalog, bugun)
+    zeka = CI.analyze_turn(soru, katalog, bugun, context)
     if len(zeka.proposals) > 1:
         satirlar = []
         for sira, teklif in enumerate(zeka.proposals, 1):
@@ -135,7 +140,10 @@ def sohbet_isle(body: dict, oturum: dict, rol: str, katalog=None, bugun=None):
         return None          # birden fazla tutar / vade / cek-kredi kurallari: mevcut LLM destekli hat
     if not rol_yetki.izin_var(rol, "belge.yukle"):
         return _yetki_yok()
-    return cfo_sohbet.baslat(n, aktor, katalog, yine_de=False, bugun=bugun, kapsam=_kapsam(oturum))
+    result = cfo_sohbet.baslat(n, aktor, katalog, yine_de=False, bugun=bugun, kapsam=_kapsam(oturum))
+    if zeka.safe_to_draft:
+        result["cfo_context"] = CI.context_from_result(zeka).as_dict()
+    return result
 
 
 def adim_isle(body: dict, oturum: dict, rol: str, katalog=None, bugun=None):
