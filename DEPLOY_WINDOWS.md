@@ -259,6 +259,14 @@ silinmedi.
 Bu maddeler tamamlanmadan üretim servisi başlatılmamalıdır. Bu PR hiçbir canlı
 komut çalıştırmadı.
 
+## Güncel main kanıtı
+
+Son ana dal `882f958c5ff5a5b6aeff3473d2fb075f2a008720`; post-merge CI
+`39266214714` Ubuntu/Windows testleri, dependency audit ve secret/path
+taramasında PASS olmuştur. Bu, kontrollü dağıtım için kod/CI kapısının
+geçtiğini gösterir; gerçek Windows Excel paylaşım kilidi, OneDrive eşitlemesi,
+canlı kimlik sağlayıcısı ve production rollout hâlâ `NOT VERIFIED` durumundadır.
+
 ## PR-15 final acceptance boundary
 
 PR-15 sentetik kabulü ve post-merge CI, mühendislik kanıtıdır. Gerçek Excel
