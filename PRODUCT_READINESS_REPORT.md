@@ -3,10 +3,10 @@
 
 ## 1. Yönetici özeti
 
-Sistem, PR-02–PR-06 kapsamındaki finansal tutarlılık, dayanıklı işlem günlüğü,
+Sistem, PR-02–PR-09 kapsamındaki finansal tutarlılık, dayanıklı işlem günlüğü,
 şifreli bağımsız recovery vault, RBAC ve sentetik ürün kabul testleriyle main
 dalında birleştirilmiştir. Kabul edilen main SHA:
-`bdc375d0fda749ec8345a6b8c89b95a485623646`.
+`aa8e9bf321878507a65bf3d201027257755ee8ab` (PR-08 sonrası; PR-09 dalı bu raporu günceller).
 
 Mühendislik sonucu güçlüdür; ancak tarayıcı bağımlılığı olmayan ortamda UI E2E
 testleri çalıştırılamadığı ve gerçek Windows/Excel/OneDrive davranışı üretim
@@ -25,6 +25,8 @@ Bu sonuç üretim dağıtımı değildir.
 | #4 | `feat/independent-recovery-vault` | `ac95752fb936a6b2703290a52afa62a3d02b31ce` | AES-256-GCM bağımsız recovery vault |
 | #5 | `security/finance-access-hardening` | `c998adc2aeb0c66368159af117ce68fe3f7ebf26` | RBAC, kapsam ve trusted-proxy sertleştirmesi |
 | #6 | `test/final-product-acceptance` | `bdc375d0fda749ec8345a6b8c89b95a485623646` | sentetik uçtan uca ürün kabul sözleşmeleri |
+| #7 | `docs/product-readiness-finalization` | `8642916476b2641343b628894c0ad31da5052a6e` | readiness ve operasyon dokümantasyonu |
+| #8 | `fix/windows-browser-cleanup` | `aa8e9bf321878507a65bf3d201027257755ee8ab` | Windows browser teardown stabilizasyonu |
 
 ## 3. Doğrulanan finansal garantiler
 
@@ -91,7 +93,7 @@ yalnız regresyon alarmıdır. Yerel tam suite süresi 136.00 saniyedir. Gerçek
 üretim hacmi, eşzamanlı kullanıcı ve Windows/OneDrive performansı bu testten
 çıkarılamaz; ölçülmüş üretim kapasitesi iddia edilmemiştir.
 
-## 9. Readiness scorecard
+## 9. Readiness scorecard (PR-06 historical)
 
 | Alan | Ağırlık | Kanıt skoru |
 |---|---:|---:|
@@ -136,3 +138,48 @@ UI ve operasyon kanıtları tamamlanmadan `READY_FOR_CONTROLLED_DEPLOYMENT`
 denmemelidir. Bu rapora göre doğru karar **NOT_FULLY_VERIFIED — ADDITIONAL
 EVIDENCE REQUIRED** ve bir sonraki adımın yalnız eksik kanıtları tamamlamak
 olmasıdır; yeni finansal özellik eklemek değildir.
+
+## PR-09 final acceptance addendum
+
+Bu ek, `test/final-release-readiness` dalında çalıştırılan son sentetik kabul
+kanıtlarını içerir. `tests/test_final_release_readiness.py` sonucu **5 PASS**:
+
+- Geçici kökte Windows Excel yazma/kilit/atomik replace kabul aracı: **PASS**
+  (Linux'ta gerçek Win32 paylaşım kilidi satırı **SKIPPED**; GitHub Windows'ta
+  ayrıca çalıştırılır).
+- AES-256-GCM snapshot, SQLite online backup, Excel/audit/journal restore,
+  manifest/hash ve ikinci restore: **PASS**.
+- Yanlış/eksik anahtar, bozuk ciphertext, dolu hedef ve yarım atomic replace:
+  **PASS / fail-closed**.
+- `NEEDS_REVIEW` için OWNER/CFO gerekçeli ve audit kimlikli manuel karar;
+  yetkisiz rol reddi ve tek posting: **PASS**.
+- Altı rolün recovery ve finans erişim matrisi: **PASS**.
+
+Sentetik ölçüm çıktısı dataset=10 işlem, son commit korunmuş, kayıp işlem=0;
+snapshot/restore süreleri test logunda ölçülür. Bu bir üretim RPO/RTO garantisi
+değildir. Gerçek OneDrive senkronizasyonu, off-site anahtar/depoya bağlantı,
+owner politika imzası, canlı migration ve üretim restore'u **NOT VERIFIED**.
+
+PR-09 CI run `39197157398` ve duplicate push run `39197146820` yeşildir:
+Ubuntu **466 passed / 3 skipped / 352 subtests**, Windows **467 passed / 2
+skipped / 352 subtests**. Chromium E2E CI'da kuruldu ve suite içinde çalıştı;
+Ruff/mypy baseline adımları mevcut non-blocking politika ile başarılı raporlandı.
+
+## Güncel ağırlıklı readiness scorecard
+
+| Alan | Ağırlık | Doğrulanmış skor |
+|---|---:|---:|
+| Finansal doğruluk | 20% | 19/20 |
+| İşlem bütünlüğü | 20% | 19/20 |
+| Güvenlik | 15% | 14/15 |
+| Backup ve recovery | 15% | 14/15 |
+| Test ve CI | 10% | 10/10 |
+| CFO işlevleri | 10% | 8/10 |
+| Kullanıcı deneyimi | 5% | 4/5 |
+| Operasyon | 5% | 3/5 |
+| **Toplam** | **100%** | **91/100 = 9.1/10** |
+
+9.1/10 yalnız doğrulanmış sentetik ve CI kanıtıdır; 9.9 hedefi kanıtlanmış
+değildir. Gerçek OneDrive senkronizasyonu, off-site/KMS anahtar sahipliği,
+üretim migration/restore, owner politika imzası ve canlı servis kabulü
+**NOT VERIFIED** kaldığı için final karar **NOT_FULLY_VERIFIED**'dır.

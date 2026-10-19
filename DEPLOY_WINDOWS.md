@@ -197,3 +197,26 @@ ile karşılaştırılmalıdır. Ubuntu ve Windows CI yeşil değilse, sentetik 
 PASS değilse veya tarayıcı kabul kanıtı yoksa işlem `NOT_FULLY_VERIFIED` olarak
 kalır. Üretim dosyalarına geçişten önce sahip onayı, ayrı yedek anahtarı, geri
 dönüş provası ve Windows/Excel kilit testi ayrıca yapılmalıdır.
+
+## Final release-readiness sınırı
+
+PR-09 testleri Windows runner'da yalnızca CI'nin geçici çalışma klasöründe
+`windows_dogrulama.py --klasor <temp>` ile çalıştırılır. Gerçek OneDrive klasörü,
+gerçek Excel dosyası ve `C:\ai-excel` bu kabul çalışmasında kullanılmaz.
+`--onedrive-klasoru` modu ayrı bir açık onay gerektirir ve çalıştırılmadı;
+OneDrive bulut senkronizasyonu **NOT VERIFIED** olarak kalır.
+
+Kontrollü dağıtım öncesi kontrol listesi:
+
+1. Son `main` SHA, post-merge Ubuntu/Windows CI, dependency audit ve
+   secret/path scan yeşil olmalı.
+2. Sentetik vault restore, manifest, SQLite integrity ve mutabakat PASS olmalı.
+3. OWNER/CFO manuel `NEEDS_REVIEW` kararı ve audit zinciri kanıtlanmalı.
+4. Üretim dışı KMS anahtarı, retention, off-site hedef ve restore yetkilisi
+   yazılı olarak atanmalı.
+5. Uygulama rollback'i, veritabanı şema rollback'i ve finansal veri restore'u
+   ayrı prosedürler olarak prova edilmelidir; hiçbiri burada üretimde uygulanmadı.
+
+Bu belge bir deployment çalıştırma talimatı olarak saklanır; PR-09 kapsamında
+üretim servisi başlatılmadı, migration/restore yapılmadı ve kullanıcı dosyası
+silinmedi.

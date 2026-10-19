@@ -54,6 +54,34 @@ tests because a browser binary was unavailable in this environment. PR-06 CI run
 `39177361390` passed on Ubuntu and Windows; post-merge main run `39177888177`
 also passed on Ubuntu (1m51s), Windows (4m35s), dependency audit and secret/path scan.
 
+## PR-09 final release-readiness acceptance
+
+`tests/test_final_release_readiness.py` adds five repeatable disposable-fixture
+contracts: the Windows acceptance adapter, complete encrypted restore with
+synthetic RPO/RTO measurement, wrong/missing/damaged-key and atomic-replace
+failure paths, manual `NEEDS_REVIEW` recovery with OWNER/CFO audit evidence,
+and the recovery permission matrix. No production path is resolved by these
+tests.
+
+Local PR-09 focused result: **5 passed**. Final local full suite:
+**461 passed, 8 skipped, 352 subtests** in 142.09 seconds. PR-09 CI run
+`39197157398` passed with **466 passed, 3 skipped, 352 subtests** on Ubuntu and
+**467 passed, 2 skipped, 352 subtests** on Windows. Chromium was installed and
+browser E2E ran in both CI jobs. Ubuntu skips were the opt-in production-DB copy,
+the Windows-only sharing-lock test and optional Poppler; Windows skips were the
+production-DB copy and optional Poppler. A local machine without a browser is
+reported as `SKIPPED`, never silently treated as passed.
+
+The Windows adapter is executed against a temporary synthetic workbook. The
+optional `--onedrive-klasoru` mode was not run: live OneDrive synchronization is
+**NOT VERIFIED** and remains a rollout gate.
+
+### Final status vocabulary
+
+Every final acceptance item is reported as `PASS`, `FAIL`, `SKIPPED`,
+`NOT VERIFIED`, or `BLOCKED`. A synthetic pass does not prove production
+OneDrive, real Excel, owner policy approval, off-site storage, or live migration.
+
 ## Production data is never touched
 
 * `tests/conftest.py` sets `TOUCHE_BASE_DIR`, `TOUCHE_MAIN_WORKBOOK`, `TOUCHE_BACKUP_WORKBOOK` to a temp folder
@@ -83,6 +111,7 @@ also passed on Ubuntu (1m51s), Windows (4m35s), dependency audit and secret/path
 | `test_proje_finansi.py` | revenue/collection/expense/payment/profit/cash kept apart on fixtures, other projects don't leak, work items, counterparty balances, reversals, loans, read-only connection, Holding built from real activities with intercompany eliminated, a newly added activity works unchanged |
 | `test_cfo_http.py` | the same flows over real HTTP (wizard, password approval, queries, navigation data endpoints, RBAC scope, other users' drafts, Excel status) |
 | `test_final_product_acceptance.py` | PR-06 end-to-end financial acceptance: approval, durable posting, reports, encrypted backup/restore, realistic transaction matrix, idempotency, lock/health degradation and scoped identity |
+| `test_final_release_readiness.py` | PR-09 synthetic Windows adapter, complete encrypted restore, RPO/RTO measurement, fail-closed vault paths, manual recovery audit/authorization and RBAC matrix |
 | `test_ui_tarayici.py` | real Chromium (Playwright): Holding → Gürsar Mimarlık → Göktürk Okulu navigation, back button, deep link after reload, breadcrumb, wizard chips, the 10-step end-to-end scenario, and **no console/CSP error** on any page. Skipped automatically when Playwright/Chromium is missing |
 | existing suites | legacy behaviour (documents, Telegram flows, FX, RBAC, project work items, …) migrated to the isolated environment |
 

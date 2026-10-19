@@ -55,3 +55,18 @@ PR-06 ile yetkili kapsam kontrolü, kilitli çalışma kitabında degraded sağl
 idempotent posting ve şifreli snapshot geri açma sentetik olarak kanıtlandı.
 Tarayıcı bağımlılığı bulunmayan yerel ortamda 7 Chromium testi atlandı; bu nedenle
 UI kabulü ve gerçek reverse-proxy/OneDrive davranışı üretim için ayrıca doğrulanmalıdır.
+
+## PR-09 final security acceptance
+
+Sentetik rol matrisi tüm altı rol için `finans.goruntule` erişimini korurken
+`recovery.authorize` iznini yalnız OWNER/CFO'ya verir; VIEWER onaylayamaz,
+PROJECT_MANAGER finansal kayıt düzenleyemez, ACCOUNTANT belge yükleyebilir ama
+recovery yetkisi taşımaz. Manuel `NEEDS_REVIEW` akışı ayrıca doğrulanmış oturum,
+faaliyet kapsamı, karar nedeni ve audit kimliği ister. Yetkisiz denemeler
+finansal posting yapmadan reddedilir.
+
+Vault kabulü yanlış/eksik anahtar, bozuk ciphertext, mevcut hedef ve başarısız
+atomic replace durumlarında fail-closed çalışır. Kaynak hash'leri değişmez;
+restore hiçbir mevcut hedefi ezmez. Gerçek proxy/Tailscale, off-site KMS ve
+üretim kimlik sağlayıcısı kullanılmadı; bunlar **NOT VERIFIED** ve kontrollü
+dağıtım ön koşuludur.
