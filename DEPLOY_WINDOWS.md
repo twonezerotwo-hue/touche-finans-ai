@@ -220,3 +220,25 @@ Kontrollü dağıtım öncesi kontrol listesi:
 Bu belge bir deployment çalıştırma talimatı olarak saklanır; PR-09 kapsamında
 üretim servisi başlatılmadı, migration/restore yapılmadı ve kullanıcı dosyası
 silinmedi.
+
+## Final owner deployment checklist (manual approval required)
+
+- [ ] `origin/main` SHA ve post-merge Ubuntu/Windows CI yeşil.
+- [ ] Ana workbook ve tek backup yolu işletme sahibi tarafından doğrulandı;
+      hash ilk snapshot ile kaydedildi.
+- [ ] Windows servis hesabı, yazma izinleri ve trusted proxy/Tailscale allowlist'i
+      onaylandı.
+- [ ] Üretim dışı KMS anahtarı oluşturuldu; iki yetkili escrow ve rotasyon sahibi
+      belirlendi. Anahtar uygulama deposuna veya vault'a yazılmadı.
+- [ ] Off-site sağlayıcı hesabı, checksum doğrulaması ve retention politikası
+      yazılı olarak onaylandı.
+- [ ] Boş bir test hedefinde bağımsız restore ve Excel–SQLite mutabakatı PASS.
+- [ ] Migration preflight, uygulama rollback'i, schema rollback'i ve finansal
+      restore prosedürleri ayrı ayrı prova edildi.
+- [ ] `NEEDS_REVIEW` kararında OWNER/CFO kimliği, gerekçe ve audit olayı kontrol
+      edildi.
+- [ ] Health, reconciliation, backup failure ve recovery alert'leri izleniyor.
+- [ ] Canlı deployment için ayrı, açık owner onayı alındı.
+
+Bu maddeler tamamlanmadan üretim servisi başlatılmamalıdır. Bu PR hiçbir canlı
+komut çalıştırmadı.
