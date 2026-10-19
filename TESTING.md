@@ -84,6 +84,27 @@ OneDrive, real Excel, owner policy approval, off-site storage, or live migration
 
 ## Production data is never touched
 
+## PR-16 financial correctness contracts
+
+`tests/test_finance_correctness_v2.py` tamamen geçici SQLite kullanır ve beş
+regresyon sözleşmesi içerir:
+
+* işlem tarihi forecast başlangıcından önce, vade tarihi pencere içinde olan
+  alacak projeksiyona dahil edilir;
+* vade penceresi dışındaki kayıt ve iptal edilmiş kayıt projeksiyona girmez;
+* desteklenmeyen para tutarı veya voucher kimliği içeren LLM yanıtı reddedilir;
+* yalnızca yetkili sentetik kanıtla eşleşen LLM yanıtı kabul edilir.
+
+PR-16 focused result: **12 passed** (forecast + provenance ve mevcut
+provenance sözleşmeleri). Ruff `E9,F` ve `mypy scripts/finans_provenance.py`
+temizdir. `finans_danismani.py` içindeki önceki non-blocking Ruff/mypy borcu
+ayrı tutulmuştur; bu PR ile yeni bir borç eklenmemiştir.
+
+`nakit_13hafta._kirilim()` artık işlem tarihini değil `vade` alanını pencere
+filtresi olarak kullanır ve iptal/ters kayıtları dışarıda bırakır. Bu, açılış
+nakdini veya geçmiş muhasebe kayıtlarını değiştirmez; yalnızca gelecek nakit
+olaylarının doğru haftaya alınmasını sağlar.
+
 * `tests/conftest.py` sets `TOUCHE_BASE_DIR`, `TOUCHE_MAIN_WORKBOOK`, `TOUCHE_BACKUP_WORKBOOK` to a temp folder
   **before `config` is imported** and aborts the session if the resolved MAIN path is outside it or looks like a
   user/OneDrive folder.

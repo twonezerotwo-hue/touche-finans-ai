@@ -20,14 +20,19 @@ from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from openpyxl import load_workbook
-
-from config import LOGLAR, FIRMALAR, ana_excel_yolu
 import finans_cekirdegi as _cekirdek
-from finans_cekirdegi import _norm, faaliyet_anahtari_bul, yonetim_ozeti, veritabanini_hazirla
+import finans_provenance as _provenance
+from config import FIRMALAR, LOGLAR, ana_excel_yolu
+from finans_cekirdegi import (
+    _norm,
+    faaliyet_anahtari_bul,
+    veritabanini_hazirla,
+    yonetim_ozeti,
+)
 from finans_komutlari import acik_borc_vadesi_guncelle, turkce_tarih_coz
 from kurumsal_finans import butce_sapma_raporu, kurumsal_durum
 from ollama_client import metne_sor, son_metin_saglayici
+from openpyxl import load_workbook
 
 log = logging.getLogger(__name__)
 AUDIT_PATH = Path(LOGLAR) / "asistan_audit.jsonl"
@@ -1081,16 +1086,37 @@ def asistana_sor(soru, faaliyet="tum", profil=None, llm_kullan=True, aktor="cfo_
             "JSON döndür: {\"cevap\":\"...\",\"aksiyonlar\":[\"...\"],\"kanitlar\":[\"...\"]}.\n"
             f"Soru: {soru}\nKanit: {json.dumps(kanit, ensure_ascii=False)}"
         )
+        deterministik_cevap = cevap
+        deterministik_aksiyonlar = list(aksiyonlar)
+        deterministik_kanitlar = list(kanitlar)
         try:
             yanit = metne_sor(prompt)
             metin = str(yanit.get("cevap") or "").strip()
             if metin:
-                cevap = metin[:3000]
-                llm_durumu = "evren_api" if son_metin_saglayici() == "evren" else "yerel_ollama"
-                if isinstance(yanit.get("aksiyonlar"), list):
-                    aksiyonlar = [str(x)[:300] for x in yanit["aksiyonlar"][:3] if str(x).strip()]
-                if isinstance(yanit.get("kanitlar"), list):
-                    kanitlar = [str(x)[:300] for x in yanit["kanitlar"][:4] if str(x).strip()]
+                aday_aksiyonlar = (
+                    [str(x)[:300] for x in yanit["aksiyonlar"][:3] if str(x).strip()]
+                    if isinstance(yanit.get("aksiyonlar"), list) else deterministik_aksiyonlar
+                )
+                aday_kanitlar = (
+                    [str(x)[:300] for x in yanit["kanitlar"][:4] if str(x).strip()]
+                    if isinstance(yanit.get("kanitlar"), list) else deterministik_kanitlar
+                )
+                dogrulama = _provenance.validate_llm_output(metin, aday_kanitlar, kanit)
+                if dogrulama["valid"]:
+                    cevap = metin[:3000]
+                    aksiyonlar = aday_aksiyonlar
+                    kanitlar = aday_kanitlar
+                    llm_durumu = "evren_api" if son_metin_saglayici() == "evren" else "yerel_ollama"
+                else:
+                    # Model açıklaması kanıt sözleşmesini aşarsa yalnızca
+                    # deterministik hesap ve kaynaklar kullanıcıya gösterilir.
+                    cevap = deterministik_cevap
+                    aksiyonlar = deterministik_aksiyonlar
+                    kanitlar = deterministik_kanitlar + [
+                        "LLM açıklaması kanıt doğrulamasından geçmedi; güvenli deterministik yanıt gösterildi."
+                    ]
+                    llm_durumu = "deterministik_kanit_fallback"
+                    log.warning("LLM kanıt doğrulaması reddedildi: %s", dogrulama["reason"])
         except Exception as exc:
             log.warning("LLM aciklamasi kullanilamadi: %s", exc)
             llm_durumu = "deterministik_yedek"

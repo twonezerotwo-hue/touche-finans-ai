@@ -7,9 +7,11 @@ Kullanicidan gelen metin hicbir zaman SQL veya kaynak kimligi olarak calistirilm
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 import proje_finansi as pf
@@ -37,6 +39,21 @@ ALIASES = {
 _NAKIT = tuple(pf.NAKIT)
 _FINANS = ("300", "331", "336")
 
+_PARA_TOKENS = "₺|TL|TRY|USD|EUR|USDT|GBP"
+_PARA_RE = re.compile(
+    rf"(?P<sign>-)?(?P<sayi>\d[\d.\s]*(?:,\d{{1,2}}|\.\d{{1,2}})?)\s*(?P<para>{_PARA_TOKENS})\b",
+    re.IGNORECASE,
+)
+_KANIT_ID_RE = re.compile(
+    r"\b(?:JRN|TX|DOC|BELGE|KRD|ODM|MAS|FAT|INV)[-_][A-Z0-9][A-Z0-9_-]{2,}\b",
+    re.IGNORECASE,
+)
+_PARA_ALANLARI = (
+    "tutar", "amount", "toplam", "bakiye", "nakit", "alacak", "borc", "borç",
+    "odeme", "ödeme", "tahsil", "gelir", "gider", "kar", "kâr", "maliyet",
+    "finans", "kredi", "fiyat", "ciro", "net", "rezerv", "kapasite", "acik",
+)
+
 
 def normalize_metric(metric: str) -> str:
     key = str(metric or "").strip().casefold().replace("-", "_").replace(" ", "_")
@@ -44,6 +61,100 @@ def normalize_metric(metric: str) -> str:
     if key not in METRIC_SPECS:
         raise ValueError("Desteklenmeyen metrik")
     return key
+
+
+def _decimal_from_text(value: str) -> Decimal | None:
+    """Türkçe/uluslararası para yazımını kuruşa yuvarlanmış Decimal'e çevirir."""
+    text = str(value or "").strip().replace(" ", "")
+    if not text:
+        return None
+    try:
+        if "," in text and "." in text:
+            # Son ayraç ondalıktır: 1.234.567,89 veya 1,234,567.89.
+            if text.rfind(",") > text.rfind("."):
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", "")
+        elif "," in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif text.count(".") > 1:
+            text = text.replace(".", "")
+        return Decimal(text).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _iter_financial_numbers(value: Any, key: str = ""):
+    """Kanıt paketinden yalnızca finansal alanları güvenli biçimde çıkarır."""
+    normalized = str(key or "").casefold()
+    finans_alani = any(token in normalized for token in _PARA_ALANLARI)
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            yield from _iter_financial_numbers(child, str(child_key))
+        return
+    if isinstance(value, (list, tuple, set)):
+        for child in value:
+            yield from _iter_financial_numbers(child, key)
+        return
+    if finans_alani and isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
+        number = Decimal(str(value))
+        if "kurus" in normalized:
+            number /= Decimal(100)
+        yield number.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _iter_ids(value: Any, key: str = ""):
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            yield from _iter_ids(child, str(child_key))
+        return
+    if isinstance(value, (list, tuple, set)):
+        for child in value:
+            yield from _iter_ids(child, key)
+        return
+    if isinstance(value, str):
+        # Kimlikler yapılandırılmış alanlarda veya metin kanıtlarında olabilir.
+        yield from _KANIT_ID_RE.findall(value)
+
+
+def validate_llm_output(answer: Any, claims: Any, evidence: Any) -> dict[str, Any]:
+    """LLM açıklamasını yalnızca önceden yetkilendirilmiş kanıtla sınar.
+
+    Bu fonksiyon hesap yapmaz ve cevabı düzeltmez. Para birimli bir iddia,
+    kanıt paketindeki bir tutarla eşleşmiyorsa veya bilinmeyen bir voucher/
+    belge kimliği kullanıyorsa ``valid=False`` döner; çağıran deterministik
+    cevaba geri dönmelidir.
+    """
+    allowed_amounts = set(_iter_financial_numbers(evidence))
+    allowed_ids = {item.casefold() for item in _iter_ids(evidence)}
+    text_parts = [str(answer or "")]
+    if isinstance(claims, (list, tuple, set)):
+        text_parts.extend(str(item) for item in claims)
+    elif claims:
+        text_parts.append(str(claims))
+    text = "\n".join(text_parts)
+    unsupported_amounts: list[str] = []
+    for match in _PARA_RE.finditer(text):
+        parsed = _decimal_from_text(match.group("sayi"))
+        if parsed is not None and parsed not in allowed_amounts:
+            unsupported_amounts.append(match.group(0).strip())
+    unsupported_ids = [
+        item for item in _KANIT_ID_RE.findall(text)
+        if item.casefold() not in allowed_ids
+    ]
+    if unsupported_amounts or unsupported_ids:
+        reasons = []
+        if unsupported_amounts:
+            reasons.append("desteksiz tutar: " + ", ".join(unsupported_amounts[:3]))
+        if unsupported_ids:
+            reasons.append("desteksiz kanıt kimliği: " + ", ".join(unsupported_ids[:3]))
+        return {
+            "valid": False,
+            "reason": "; ".join(reasons),
+            "unsupported_amounts": unsupported_amounts,
+            "unsupported_ids": unsupported_ids,
+        }
+    return {"valid": True, "reason": "", "unsupported_amounts": [], "unsupported_ids": []}
 
 
 def _scope_filter(fisler: Iterable[dict], faaliyet=None, proje=None, bas=None, bit=None):
@@ -82,7 +193,7 @@ def _contribution(f, metric):
 
 def _currency_map(fisler):
     """Ledger tutarlarini TL'ye normalize ettigi icin para birimi kanitini korur."""
-    result = {}
+    result: dict[str, dict[str, Any]] = {}
     with pf.okuma_baglantisi() as con:
         if con is None:
             return result
