@@ -63,11 +63,14 @@ failure paths, manual `NEEDS_REVIEW` recovery with OWNER/CFO audit evidence,
 and the recovery permission matrix. No production path is resolved by these
 tests.
 
-Local PR-09 focused result: **5 passed**. The pre-PR-09 full-suite baseline is
-**456 passed, 8 skipped, 352 subtests**; the new suite adds five passing tests
-without changing the existing skip policy. Chromium tests are valid CI evidence
-when GitHub installs Chromium; a local machine without a browser is reported as
-`SKIPPED`, never silently treated as passed.
+Local PR-09 focused result: **5 passed**. Final local full suite:
+**461 passed, 8 skipped, 352 subtests** in 142.09 seconds. PR-09 CI run
+`39197157398` passed with **466 passed, 3 skipped, 352 subtests** on Ubuntu and
+**467 passed, 2 skipped, 352 subtests** on Windows. Chromium was installed and
+browser E2E ran in both CI jobs. Ubuntu skips were the opt-in production-DB copy,
+the Windows-only sharing-lock test and optional Poppler; Windows skips were the
+production-DB copy and optional Poppler. A local machine without a browser is
+reported as `SKIPPED`, never silently treated as passed.
 
 The Windows adapter is executed against a temporary synthetic workbook. The
 optional `--onedrive-klasoru` mode was not run: live OneDrive synchronization is

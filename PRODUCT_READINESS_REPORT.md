@@ -93,7 +93,7 @@ yalnız regresyon alarmıdır. Yerel tam suite süresi 136.00 saniyedir. Gerçek
 üretim hacmi, eşzamanlı kullanıcı ve Windows/OneDrive performansı bu testten
 çıkarılamaz; ölçülmüş üretim kapasitesi iddia edilmemiştir.
 
-## 9. Readiness scorecard
+## 9. Readiness scorecard (PR-06 historical)
 
 | Alan | Ağırlık | Kanıt skoru |
 |---|---:|---:|
@@ -160,7 +160,26 @@ snapshot/restore süreleri test logunda ölçülür. Bu bir üretim RPO/RTO gara
 değildir. Gerçek OneDrive senkronizasyonu, off-site anahtar/depoya bağlantı,
 owner politika imzası, canlı migration ve üretim restore'u **NOT VERIFIED**.
 
-PR-09 sonrası ağırlıklı puan, CI ve browser kanıtı tamamlanmadan kesinleştirilmez;
-9.9/10 iddiası yapılmamıştır. Final karar bu sınırlar nedeniyle
-**NOT_FULLY_VERIFIED** olarak korunur; kontrollü dağıtım için yukarıdaki
-üretim-ortamı ön koşulları sahibin onayına bırakılmıştır.
+PR-09 CI run `39197157398` ve duplicate push run `39197146820` yeşildir:
+Ubuntu **466 passed / 3 skipped / 352 subtests**, Windows **467 passed / 2
+skipped / 352 subtests**. Chromium E2E CI'da kuruldu ve suite içinde çalıştı;
+Ruff/mypy baseline adımları mevcut non-blocking politika ile başarılı raporlandı.
+
+## Güncel ağırlıklı readiness scorecard
+
+| Alan | Ağırlık | Doğrulanmış skor |
+|---|---:|---:|
+| Finansal doğruluk | 20% | 19/20 |
+| İşlem bütünlüğü | 20% | 19/20 |
+| Güvenlik | 15% | 14/15 |
+| Backup ve recovery | 15% | 14/15 |
+| Test ve CI | 10% | 10/10 |
+| CFO işlevleri | 10% | 8/10 |
+| Kullanıcı deneyimi | 5% | 4/5 |
+| Operasyon | 5% | 3/5 |
+| **Toplam** | **100%** | **91/100 = 9.1/10** |
+
+9.1/10 yalnız doğrulanmış sentetik ve CI kanıtıdır; 9.9 hedefi kanıtlanmış
+değildir. Gerçek OneDrive senkronizasyonu, off-site/KMS anahtar sahipliği,
+üretim migration/restore, owner politika imzası ve canlı servis kabulü
+**NOT VERIFIED** kaldığı için final karar **NOT_FULLY_VERIFIED**'dır.
