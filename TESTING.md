@@ -168,6 +168,26 @@ focused suite `8 passed` oldu. Final local full suite `469 passed, 8 skipped,
 Gerçek Excel desktop share-mode, OneDrive cloud sync, canlı migration ve gerçek
 off-site provider **NOT VERIFIED** olarak kalır.
 
+## PR-14 operational resilience v2
+
+`tests/test_recovery_operations_v2.py` yalnız `tmp_path` altında çalışır ve
+şunları sözleşme olarak doğrular: 32-byte sentetik key üretimi/rotasyonu ve
+revoke; bounded retry/backoff; off-site manifest/ciphertext checksum hatası;
+stale/missing backup ve recovery/audit backlog sağlık uyarıları; dış değişiklik
+çakışması; atomic replace ve temporary-file cleanup. Bu testler gerçek KMS,
+OneDrive, Excel desktop veya off-site hesabı kullanmaz.
+
+Focused validation:
+
+```powershell
+py -3.12 -m pytest -q tests/test_recovery_operations_v2.py tests/test_final_operational_closure.py
+```
+
+Status labels: **ENGINEERING_TESTED** = disposable fixture/contract,
+**SANDBOX_VERIFIED** = local emulator, **PRODUCTION_NOT_VERIFIED** = real
+OneDrive/Excel/KMS/provider, **OWNER_APPROVAL_REQUIRED** = key custody,
+escrow, retention, scheduler and restore authorization.
+
 ## PR-12 CFO + belge UX v2
 
 `ui/onboarding.js` ilk kullanım turunu finansal veriden bağımsız yürütür. Tur;

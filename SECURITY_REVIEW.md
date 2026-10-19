@@ -77,3 +77,19 @@ Sentetik off-site emulator metadata ve ciphertext checksum doğruluyor; plaintex
 finans verisi kabul etmiyor, tekrar sürümü reddediyor ve mevcut hedefi ezmiyor.
 Yetki/credential yönetimi yerel emulator'a dahil edilmedi. Gerçek sağlayıcı,
 KMS, Tailscale ve proxy kimliği owner-operated bir kabul adımı olarak kalır.
+
+## PR-14 operational resilience v2 security boundary
+
+`KeyRing` yalnız sentetik süreç belleğinde 32-byte CSPRNG anahtarı tutar;
+descriptor ve sağlık raporlarında anahtar malzemesi, finansal satır veya
+credential bulunmaz. Rotate/revoke işlemleri aktif anahtarı yanlışlıkla
+silmez; aktif anahtar önce rotate edilmeden revoke edilemez. Bu bir KMS veya
+escrow uygulaması değildir ve üretim anahtarı olarak kullanılmamalıdır.
+
+Off-site transfer yalnız `.vault` uzantılı, önceden şifrelenmiş snapshot kabul
+eden emulator sözleşmesiyle sınırlandırılmıştır. Upload retry bounded'dir;
+checksum/manifest doğrulaması başarısızsa health `degraded` olur. Atomic sync
+copy beklenen hedef hash'i değiştiğinde fail-closed davranır ve hedefi ezmez.
+Gerçek sağlayıcı güvenlik politikası, immutable retention, TLS/IAM, key escrow,
+OneDrive ve Excel desktop davranışı **PRODUCTION_NOT_VERIFIED**; owner onayı
+gereken KMS/escrow/restore işlemleri **OWNER_APPROVAL_REQUIRED** durumundadır.

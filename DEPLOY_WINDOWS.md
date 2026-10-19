@@ -89,6 +89,22 @@ It creates and removes its own `_SMART_EXCEL_TEST_<id>` folder, checks closed-Ex
 only MAIN+BACKUP on disk, no leftover temp, failure recovery, a **real Excel-style share lock** (write refused with `ANA_KILITLI`, MAIN
 unchanged, BACKUP not advanced), retry after unlock, restore = swap, audit fields, and that your production files' hashes did not change.
 All lines must be `PASS` (exit code 0). **STOP** on any `FAIL`.
+
+### PR-14 operational acceptance (isolated only)
+
+Do not point these checks at `C:\ai-excel`, OneDrive production folders or a
+real workbook. Use a temporary root and run the focused contracts:
+
+```powershell
+py -3.12 -m pytest -q tests\test_recovery_operations_v2.py tests\test_final_operational_closure.py
+```
+
+The result is engineering evidence for atomic copy, external-change conflict,
+retry/backoff, off-site checksum/retention and recovery health. It is not proof
+of live OneDrive synchronization or Excel desktop share-mode behavior. Those
+remain **PRODUCTION_NOT_VERIFIED** until an owner-authorized synthetic account
+and isolated folder are available; any real-provider/key-custody step is
+**OWNER_APPROVAL_REQUIRED**.
 (The lock check uses the same Win32 share mode Excel uses when it holds a workbook open, so no manual Excel step is needed.)
 
 ## 8. Inventory and reconciliation (read-only)

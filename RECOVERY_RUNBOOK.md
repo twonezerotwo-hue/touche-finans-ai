@@ -84,6 +84,42 @@ gerektirir:
 Üretim anahtarı etkinleştirme, retention scheduler'ı, off-site hesap ve
 restore onayı uygulanmadı; bunlar kontrollü dağıtım ön koşuludur.
 
+## PR-14 operasyonel dayanıklılık v2 (sentetik kabul)
+
+`scripts/recovery_operations.py` provider-neutral bir operasyon sözleşmesi
+sunar: `KeyRing` yalnız sentetik testlerde 32-byte rastgele anahtar üretir ve
+anahtar malzemesini metadata/log içine koymaz; `upload_with_retry` sınırlı
+exponential backoff ile tekrar dener; `verify_versions` bozuk veya eksik
+snapshot'ı **degraded** raporlar; `backup_health` son başarılı/doğrulanmış
+snapshot yaşını, recovery backlog'unu, audit onarım kuyruğunu ve manifest
+doğrulama hatalarını finansal satır göstermeden özetler. `atomic_sync_copy`
+hedefin beklenen hash'i değişmişse yazmayı durdurur ve geçici dosyayı temizler.
+
+Bu sözleşmeler gerçek bulut sağlayıcısı veya KMS değildir. Gerçek ortamda
+anahtarlar secret manager/KMS'te tutulmalı, rotasyon/escrow iki yetkiliyle
+onaylanmalı, sağlayıcı yükleme ve immutable-retention garantileri ayrıca
+kanıtlanmalıdır. **ENGINEERING_TESTED:** sentetik emulator ve geçici dosyalar.
+**SANDBOX_VERIFIED:** yerel off-site emülatörü. **PRODUCTION_NOT_VERIFIED:**
+gerçek OneDrive, Excel desktop, bulut/off-site ve KMS. **OWNER_APPROVAL_REQUIRED:**
+anahtar sahibi, escrow, retention, scheduler ve gerçek restore yetkilisi.
+
+### OneDrive-benzeri kabul koşulları
+
+`atomic_sync_copy` testleri dış değişikliği hash ile yakalar, hedefi ezmez,
+atomic replace yapar ve `.tmp` bırakmaz. Windows gerçek Excel share-mode ve
+canlı OneDrive eşitlemesi bu depoda çalıştırılmadı; gerçek kabul için yalnız
+sentetik bir OneDrive hesabı/klasörüyle aşağıdaki adımlar yürütülmelidir:
+
+1. Test workbook/vault oluştur; production yolu kullanma.
+2. İkinci süreçle hedefte değişiklik/lock oluştur ve kopyayı dene.
+3. Çakışmanın `degraded`/manual-review olarak raporlandığını ve hedefin
+   değişmediğini doğrula.
+4. Lock kalkınca retry ile atomic replace ve hash doğrulamasını çalıştır.
+5. Snapshot'ı boş yeni klasöre indirip manifest ve SQLite mutabakatını doğrula.
+
+Bu adımlar gerçek OneDrive senkronizasyonu için **NOT VERIFIED** olarak
+raporlanmalıdır; production hesabına bağlanmak bu PR'ın kapsamı değildir.
+
 ## Final operational closure (synthetic, 2026-10-19)
 
 `recovery_offsite.LocalOffsiteStore` yalnız AES-256-GCM ile üretilmiş `.vault`
