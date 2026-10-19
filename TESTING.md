@@ -167,3 +167,13 @@ focused suite `8 passed` oldu. Final local full suite `469 passed, 8 skipped,
 Ölçümler regresyon alarmıdır; üretim kapasitesi/RPO/RTO garantisi değildir.
 Gerçek Excel desktop share-mode, OneDrive cloud sync, canlı migration ve gerçek
 off-site provider **NOT VERIFIED** olarak kalır.
+
+## PR-12 CFO + belge UX v2
+
+`ui/onboarding.js` ilk kullanım turunu finansal veriden bağımsız yürütür. Tur;
+dashboard, CFO, belge/onay, faaliyet-proje ve recovery görünümünü açıklar.
+`Şimdilik geç`, `Bir daha gösterme` ve ileri/sonlandır seçenekleri vardır;
+tercih yalnızca tarayıcı localStorage alanında tutulur. `Yardım turunu aç`
+ile tekrar başlatılabilir. `tests/test_onboarding_contract.py` bu davranışın
+API çağrısı veya finansal yazma yapmadığını doğrular; gerçek tarayıcı davranışı
+Playwright varsa `test_ui_tarayici.py` ile ayrıca çalışır.
