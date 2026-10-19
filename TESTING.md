@@ -112,6 +112,7 @@ OneDrive, real Excel, owner policy approval, off-site storage, or live migration
 | `test_cfo_http.py` | the same flows over real HTTP (wizard, password approval, queries, navigation data endpoints, RBAC scope, other users' drafts, Excel status) |
 | `test_final_product_acceptance.py` | PR-06 end-to-end financial acceptance: approval, durable posting, reports, encrypted backup/restore, realistic transaction matrix, idempotency, lock/health degradation and scoped identity |
 | `test_final_release_readiness.py` | PR-09 synthetic Windows adapter, complete encrypted restore, RPO/RTO measurement, fail-closed vault paths, manual recovery audit/authorization and RBAC matrix |
+| `test_final_operational_closure.py` | Migration/rollback rehearsal, fail-closed offsite emulator, external workbook conflict rejection and 10/100/500-record synthetic snapshot/restore performance |
 | `test_ui_tarayici.py` | real Chromium (Playwright): Holding → Gürsar Mimarlık → Göktürk Okulu navigation, back button, deep link after reload, breadcrumb, wizard chips, the 10-step end-to-end scenario, and **no console/CSP error** on any page. Skipped automatically when Playwright/Chromium is missing |
 | existing suites | legacy behaviour (documents, Telegram flows, FX, RBAC, project work items, …) migrated to the isolated environment |
 
@@ -151,3 +152,18 @@ opens the wizard with activity and project already filled: `test_projeden_yeni_o
   they were not exercised on Windows here.
 * The legacy LLM-assisted path for complex instructions needs a running model; only its gating is tested.
 * The production workbook was never available to the tests (by design).
+
+## Final operational closure evidence
+
+`tests/test_final_operational_closure.py` yeni kanıttır; PR-09 sonucu tekrar
+sayılmaz. Windows'ta **8 test geçti**: additive migration ve ikinci çalıştırma,
+duplicate document-id fail-closed, checksum doğrulayan local offsite emulator,
+external workbook change rejection ve 10/100/500 kayıt sentetik snapshot/
+restore performansı. İlk çalıştırmada Windows temporary-file descriptor kusuru
+yakalandı; descriptor kapatma ve metadata atomic replace düzeltildikten sonra
+focused suite `8 passed` oldu. Final local full suite `469 passed, 8 skipped,
+352 subtests` olarak tamamlandı.
+
+Ölçümler regresyon alarmıdır; üretim kapasitesi/RPO/RTO garantisi değildir.
+Gerçek Excel desktop share-mode, OneDrive cloud sync, canlı migration ve gerçek
+off-site provider **NOT VERIFIED** olarak kalır.

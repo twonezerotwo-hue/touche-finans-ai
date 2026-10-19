@@ -183,3 +183,25 @@ Ruff/mypy baseline adımları mevcut non-blocking politika ile başarılı rapor
 değildir. Gerçek OneDrive senkronizasyonu, off-site/KMS anahtar sahipliği,
 üretim migration/restore, owner politika imzası ve canlı servis kabulü
 **NOT VERIFIED** kaldığı için final karar **NOT_FULLY_VERIFIED**'dır.
+
+## Final operational closure addendum (new evidence)
+
+PR-09 tekrar edilmeden, `chore/final-operational-closure` dalında yeni
+`tests/test_final_operational_closure.py` ile **8 focused PASS** elde edildi:
+
+- Sentetik eski veritabanında additive migration ve idempotent ikinci hazırlama;
+- duplicate `document_id` migration'ında fail-closed davranış ve satır koruması;
+- checksum/manifest, sürüm bütünlüğü, retention ve overwrite korumalı local
+  off-site emulator;
+- dış workbook değişikliğinde güvenli Excel yazıcısının reddi;
+- 10, 100 ve 500 kayıtla snapshot/restore sürelerinin ölçülmesi.
+
+İlk Windows çalıştırması geçici dosya descriptor'ının açık kaldığını gösterdi;
+`recovery_offsite.py` descriptor kapatma ve metadata atomic replace ile düzeltildi.
+Focused tekrar **8 passed** oldu; final local full suite **469 passed, 8 skipped,
+352 subtests** olarak tamamlandı. Bu gerçek OneDrive veya cloud provider kanıtı
+değildir; OneDrive senkronizasyonu ve off-site provider **NOT VERIFIED**.
+
+Migration/rollback provası sentetik olduğu için canlı schema rollback'i,
+production identity/Tailscale, KMS anahtar sahipliği ve owner onayı ayrıca
+gereklidir. Yeni kanıtlarla skor artırılmadı: **91/100 = 9.1/10**.

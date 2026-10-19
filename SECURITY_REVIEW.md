@@ -70,3 +70,10 @@ atomic replace durumlarında fail-closed çalışır. Kaynak hash'leri değişme
 restore hiçbir mevcut hedefi ezmez. Gerçek proxy/Tailscale, off-site KMS ve
 üretim kimlik sağlayıcısı kullanılmadı; bunlar **NOT VERIFIED** ve kontrollü
 dağıtım ön koşuludur.
+
+## Final operational closure security
+
+Sentetik off-site emulator metadata ve ciphertext checksum doğruluyor; plaintext
+finans verisi kabul etmiyor, tekrar sürümü reddediyor ve mevcut hedefi ezmiyor.
+Yetki/credential yönetimi yerel emulator'a dahil edilmedi. Gerçek sağlayıcı,
+KMS, Tailscale ve proxy kimliği owner-operated bir kabul adımı olarak kalır.

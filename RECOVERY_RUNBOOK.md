@@ -83,3 +83,20 @@ gerektirir:
 
 Üretim anahtarı etkinleştirme, retention scheduler'ı, off-site hesap ve
 restore onayı uygulanmadı; bunlar kontrollü dağıtım ön koşuludur.
+
+## Final operational closure (synthetic, 2026-10-19)
+
+`recovery_offsite.LocalOffsiteStore` yalnız AES-256-GCM ile üretilmiş `.vault`
+dosyalarını kabul eden, checksum doğrulayan ve boş hedefe indiren provider-neutral
+bir emulator'dur. Gerçek bulut hesabı/credential içermez. Yükleme, indirme,
+manifest bozulması, tekrar sürüm, retention ve mevcut hedefi ezmeme testleri
+geçmiştir. Gerçek off-site sağlayıcı **NOT VERIFIED**.
+
+Migration provası, eski sentetik `finans_islemleri` tablosundaki kayıtları iki
+kez schema hazırlama sonrasında korudu; duplicate `document_id` durumunda unique
+index migration'ı fail-closed kaldı ve satırlar silinmedi. Bu, canlı migration
+ve rollback onayı değildir.
+
+Üretim öncesi manuel kararlar: KMS/escrow sahibi, retention ve snapshot scheduler
+onayı, off-site hesap kurulumu, restore yetkilisi, gerçek Windows/Excel ve
+OneDrive test ortamı. Hiçbiri bu çalışmada etkinleştirilmedi.
