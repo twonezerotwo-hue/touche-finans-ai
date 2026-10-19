@@ -1,0 +1,10 @@
+[
+  {"text": "Göktürk Okulu'nda Devrim'e toplam ne kadar ödeme yaptık?", "intent": "READ_ONLY_QUERY"},
+  {"text": "Gürsar Mimarlık Göktürk Okulu'nda Devrim'e 10 bin TL ödeme yaptık", "intent": "FINANCIAL_DRAFT_REQUEST"},
+  {"text": "Göktürk Okulu'nun giderlerini kalem kalem listele", "intent": "REPORT_REQUEST"},
+  {"text": "Devrim'e yazılan 10 bin TL ödemeyi iptal et", "intent": "CANCELLATION_REQUEST"},
+  {"text": "Devrim'e yazılan ödemeyi düzelt", "intent": "CORRECTION_REQUEST"},
+  {"text": "Gürsar Mimarlık'ta yeni işlem oluştur", "intent": "CLARIFICATION_REQUIRED"},
+  {"text": "Gürsar Mimarlık Göktürk Okulu'nda Devrim'e 50 bin TL ödeme yaptık; Sebahattin Çakmak'tan 30 bin TL tahsil ettik", "intent": "FINANCIAL_DRAFT_REQUEST"},
+  {"text": "Bu işlem için transfer yap", "intent": "UNSUPPORTED_REQUEST"}
+]
