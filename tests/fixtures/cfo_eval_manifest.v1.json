@@ -1,0 +1,10 @@
+{
+  "version": "cfo-eval-v1",
+  "generator": "scripts/cfo_evaluation.py",
+  "target_count": 3000,
+  "splits": {"train": "template families tr01-tr07", "validation": "template families va01-va07", "holdout": "template families ho01-ho07"},
+  "metrics": ["intent_accuracy", "amount_accuracy", "currency_accuracy", "read_write_safety_violations", "leakage_violations"],
+  "live_model_evaluation": "NOT_RUN",
+  "production_validation": "NOT_VERIFIED",
+  "notes": "Sentetik ve deterministik corpus; gerçek şirket verisi veya üretim LLM çağrısı içermez."
+}
