@@ -8,6 +8,7 @@ Playwright ya da Chromium yoksa testler atlanir (CI'da zorunlu degildir):
 import glob
 import os
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
@@ -60,8 +61,26 @@ class _SayacliSunucu(ThreadingHTTPServer):
                 self._kilit.notify_all()
 
     def bosalmayi_bekle(self, sure=15.0):
-        with self._kilit:
-            return self._kilit.wait_for(lambda: self._aktif == 0, timeout=sure)
+        """Wait for zero active handlers and a short quiet period.
+
+        Closing a browser page can enqueue one final cancellation request after
+        the first zero-count observation. On Windows that late handler may
+        still hold SQLite while the fixture teardown removes its temp folder.
+        Requiring a brief stable zero avoids deleting an in-use synthetic DB.
+        """
+        son = time.monotonic() + sure
+        while time.monotonic() < son:
+            with self._kilit:
+                kalan = son - time.monotonic()
+                if kalan <= 0:
+                    return False
+                if not self._kilit.wait_for(lambda: self._aktif == 0, timeout=kalan):
+                    return False
+            time.sleep(0.25)
+            with self._kilit:
+                if self._aktif == 0:
+                    return True
+        return False
 
 
 @unittest.skipIf(sync_playwright is None, "Playwright kurulu değil")
