@@ -39,6 +39,14 @@ async function checkSession(){
   if(!state.session.yetkili){ $("pairOverlay").hidden=false; return false; }
   $("pairOverlay").hidden=true;
   if(state.session.yerel) $("remoteButton").hidden=false;
+  try{
+    const demo=await jsonRequest("/api/demo/status");
+    if(demo.demo){
+      $("demoBanner").hidden=false;
+      $("demoBannerDetail").textContent="Yalnızca sentetik veri · "+(demo.provider==="ollama"?"Yerel Qwen bağlı: "+demo.qwen:"Deterministik yedek");
+      setAIStatus(demo.provider==="ollama"?"Yerel Qwen bağlı · "+demo.qwen:"Deterministik demo motoru");
+    }
+  }catch(_e){/* üretim sunucularında demo uç noktası olmayabilir */}
   return true;
 }
 

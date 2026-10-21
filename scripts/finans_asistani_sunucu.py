@@ -303,6 +303,15 @@ class Handler(BaseHTTPRequestHandler):
                 "yerel": True,
                 "recovery": live_recovery,
             })
+        if parsed.path == "/api/demo/status":
+            if os.environ.get("DEMO_MODE") != "1":
+                return self._json({"demo": False})
+            return self._json({
+                "demo": True, "synthetic_only": True,
+                "qwen": os.environ.get("DEMO_QWEN_STATUS", "deterministic"),
+                "provider": os.environ.get("TEXT_LLM_PROVIDER", "deterministic"),
+                "root": Path(os.environ.get("TOUCHE_BASE_DIR", "")).name,
+            })
         if parsed.path == "/api/session":
             return self._json(self._oturum())
         session = self._yetki_gerekli()

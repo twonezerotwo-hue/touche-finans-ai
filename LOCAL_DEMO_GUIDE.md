@@ -9,9 +9,9 @@ gerçek workbook, üretim kimliği ve üretim servisi okunmaz. Demo kökü boş 
 PowerShell:
 
 ```powershell
-cd C:\Temp\touche-pr20-20261021
+cd C:\Temp\touche-pr21-live-demo
 $root = "C:\Temp\touche-finans-demo-$(Get-Date -Format yyyyMMdd-HHmmss)"
-$p = Start-Process py -ArgumentList "-3.12 scripts\demo_local.py --root `"$root`"" -WorkingDirectory (Get-Location) -PassThru -WindowStyle Hidden -RedirectStandardOutput "$root.stdout.log" -RedirectStandardError "$root.stderr.log"
+.\START_TOUCHE_DEMO.ps1
 ```
 
 Çıktıdaki `DEMO_ROOT`, `DEMO_MAIN`, `DEMO_BACKUP` ve URL yalnızca bu demo
@@ -19,12 +19,25 @@ $p = Start-Process py -ArgumentList "-3.12 scripts\demo_local.py --root `"$root`
 `/api/session` ile kontrol edilir. Port, stdout içindeki `Touche Finans
 Asistanı:` satırından alınır.
 
+## Premium sentetik veri ve Qwen
+
+Başlatıcı, C:\Temp altında 4 faaliyet, 6 proje, 15 cari ve 231 sentetik
+hareket içeren tek MAIN + tek BACKUP Excel ile SQLite defteri oluşturur. Veri
+setinde zarar eden CFO Platformu, Ekim bütçe aşımı, geçmiş/gelecek vadeler,
+çoklu para birimi ve 13 haftalık nakit planı bulunur.
+Demo banner'ı verinin sentetik olduğunu ve yerel Qwen bağlantı durumunu gösterir.
+Ollama kullanılamazsa deterministik finans motoru açıkça yedek olarak çalışır.
+Gerçek Excel, OneDrive ve üretim servisi bu akışta okunmaz.
+
+Başlatıcı Python 3.12'nin gerçek yorumlayıcı PID'sini izler ve seed işlemi için
+60 saniyeye kadar bekler; `STOP_TOUCHE_DEMO.ps1` yalnızca bu PID'yi durdurur.
+
 ## Durdurma
 
 Yalnızca demo PID'sini durdurun:
 
 ```powershell
-Stop-Process -Id $p.Id
+.\STOP_TOUCHE_DEMO.ps1 -Root C:\Temp\touche-finans-demo-YYYYMMDD-HHMMSS
 ```
 
 Üretim servisini aramak, durdurmak veya yeniden başlatmak bu prosedürün

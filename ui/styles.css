@@ -74,6 +74,7 @@ dialog{border:0;border-radius:17px;padding:25px;width:min(540px,calc(100% - 30px
 
 /* CFO sohbeti ve belge merkezi tek çalışma alanı */
 .assistant-upload-form{display:grid!important;grid-template-columns:auto minmax(150px,1fr) 180px auto!important;gap:8px!important;align-items:center;padding:10px 16px 5px!important;border-top:1px solid var(--line);background:#f8fbf9}
+.demo-banner{display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 16px;background:linear-gradient(90deg,#123f32,#1a5b49);color:#e8fff3;font-size:.68rem;letter-spacing:.03em}.demo-banner strong{font-size:.7rem}.demo-banner span{opacity:.82}
 .assistant-attach{height:42px;display:flex;align-items:center;gap:7px;border:1px solid #bad4c7;border-radius:10px;background:#edf6f1;color:var(--green);padding:0 12px;cursor:pointer;font-size:.72rem;font-weight:800;white-space:nowrap;transition:.16s ease}
 .assistant-attach:hover,.assistant-attach.drag{border-color:var(--green);background:#e2f2ea;transform:translateY(-1px)}
 .assistant-attach span{font-size:1.05rem;line-height:1}.assistant-attach input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
