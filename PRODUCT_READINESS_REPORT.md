@@ -75,7 +75,8 @@ soru durumunda kalır.
 ### PR-21 izole Premium CFO demosu
 
 feat/premium-cfo-live-local-demo dalındaki başlatıcı C:\Temp altında yalnızca
-sentetik veri üretir: 4 faaliyet, 6 proje, 15 cari ve 229 finans hareketi.
+sentetik veri üretir: 4 faaliyet, 6 proje, 15 cari ve 231 finans hareketi.
+Seed, CFO Platformu için zarar eden bir proje ve Ekim bütçe sapması da üretir.
 MAIN ve BACKUP workbook aynı başlangıç checkpoint'idir; SQLite journal da aynı
 sentetik işlemleri taşır. Yerel Ollama qwen3:8b probe'u gerçek JSON yanıtıyla
 doğrulanır; model kullanılamazsa deterministik finans motoru açıkça yedektir.

@@ -13,7 +13,7 @@ Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests`
 
 ## PR-21 sentetik premium demo
 
-tests/test_demo_seed.py izole 4 faaliyet/6 proje/15 cari veri setini, 150+ fişi,
+tests/test_demo_seed.py izole 4 faaliyet/6 proje/15 cari veri setini, 231 fişi,
 MAIN-BACKUP checkpoint eşitliğini ve idempotent reuse davranışını doğrular.
 tests/test_demo_local.py yerel Ollama yokken güvenli deterministik yedeği doğrular.
 Bu testler yalnızca geçici kök kullanır ve üretim finans yollarına erişmez.

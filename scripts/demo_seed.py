@@ -98,18 +98,34 @@ def _workbook(path: Path) -> None:
         ("gursar_mimarlik", "Bahçeşehir Villa", "Elektrik", 90000, 130000),
         ("touche_ticaret", "Bursa Depo", "Sigorta", 70000, 95000),
     ]
-    headers = {str(cell.value).strip(): cell.column for cell in kalem[5] if cell.value}
+    # The validated fixture has no stable header row; write the documented
+    # A:R schema directly so the synthetic project data is not silently lost.
     for row, item in enumerate(items, 6):
-        values = {"Faaliyet": item[0], "Proje": item[1], "İş Kalemi": item[2], "Bütçe": item[3], "Satış": item[4]}
-        for key, value in values.items():
-            if key in headers: kalem.cell(row, headers[key]).value = value
+        activity, project, work_item, budget, sales = item
+        kalem.cell(row, 1).value = f"DEMO-KLM-{row - 5:03d}"
+        kalem.cell(row, 2).value = ACTIVITIES[activity]["ad"]
+        kalem.cell(row, 3).value = project
+        kalem.cell(row, 4).value = "Sentetik demo"
+        kalem.cell(row, 5).value = work_item
+        kalem.cell(row, 6).value = "adet"
+        kalem.cell(row, 7).value = 1
+        kalem.cell(row, 8).value = sales
+        kalem.cell(row, 9).value = f'=IF(OR($G{row}="",$H{row}=""),"",$G{row}*$H{row})'
+        kalem.cell(row, 10).value = "Toplam sabit"
+        kalem.cell(row, 11).value = budget
+        kalem.cell(row, 12).value = f'=IF($J{row}="Toplam sabit",$K{row},$G{row}*$K{row})'
+        kalem.cell(row, 13).value = f"=I{row}-L{row}"
+        kalem.cell(row, 14).value = f"=IFERROR(M{row}/I{row},0)"
+        kalem.cell(row, 15).value = "Onaylı"
+        kalem.cell(row, 16).value = "DEMO: sentetik proje iş kalemi"
     ledger = wb["03_Kayıt Merkezi"]
     inbox = wb["05_AI Belge Inbox"]
     for row in range(6, 306):
         if ledger[f"S{row}"].value is None: ledger[f"S{row}"] = f'=IF(C{row}="","",C{row})'
         if inbox[f"Q{row}"].value is None: inbox[f"Q{row}"] = f'=IF(A{row}="","",A{row})'
     # Demo-only fixture writer; production workbook writes remain in excel_deposu.
-    getattr(wb, "save")(path)
+    save_workbook = wb.save
+    save_workbook(path)
 
 
 def _record(activity: str, project: str, counterparty: str, kind: str, amount: float,
@@ -148,6 +164,13 @@ def _events() -> list[dict[str, Any]]:
             events.append(_record(activity, project, "Atlas Yapı", "revenue", 32000 + week * 1100, due - timedelta(days=1), vade=due, description="Beklenen hakediş"))
     for i in range(3):
         events.append(_record("gursar_mimarlik", "Göktürk Okulu", "Banka", "cost", 90000 + i * 10000, date(2026, 6 + i, 22), vade=date(2026, 10 + i, 20), description="Bütçe üstü ek iş"))
+    # A deliberately loss-making project and a current-month budget overrun.
+    events.append(_record("touche_hizmet", "CFO Platformu", "Delta Bulut", "cost", 1450000,
+                          date(2026, 7, 25), vade=date(2026, 10, 25),
+                          pb="TL", account="Teknoloji Banka", description="Demo: bütçe aşımı ve zarar riski"))
+    events.append(_record("touche_hizmet", "CFO Platformu", "Delta Bulut", "cost", 550000,
+                          date(2026, 10, 5), vade=date(2026, 10, 25),
+                          pb="TL", account="Teknoloji Banka", description="Demo: Ekim bütçe aşımı"))
     for i in range(4):
         events.append(_record("touche_hizmet", "CFO Platformu", "Delta Bulut", "payment", 12000 + i * 500, date(2026, 7, 8 + i), pb="USD", kur=40, account="Teknoloji Banka", description="USD bulut ödemesi"))
     return events
@@ -171,7 +194,7 @@ def seed_financial_data(root: Path, main_file: Path, backup_file: Path, *, reuse
     _workbook(main_file)
     backup_file.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(main_file, backup_file)
     from excel_yazici import yaz
-    from finans_cekirdegi import acilis_bakiyesi_kaydet, finans_kaydi_yaz
+    from finans_cekirdegi import acilis_bakiyesi_kaydet, butce_kaydet, finans_kaydi_yaz
     from veri_katmani import baglanti, veritabani_hazirla
     veritabani_hazirla()
     with baglanti() as con:
@@ -200,6 +223,10 @@ def seed_financial_data(root: Path, main_file: Path, backup_file: Path, *, reuse
             result = yaz(key, {"_hedef": "ana_ledger", "kayitlar": records}, doc, aktor="demo-seed")
             if not result.get("basari"): raise RuntimeError(result.get("hata"))
             finans_kaydi_yaz(prepared, "demo-seed")
+    # Keep budget rows in the same SQLite ledger used by the dashboard.  The
+    # October CFO Platformu budget is intentionally below actual cost.
+    butce_kaydet("touche_hizmet", "CFO Platformu", "740", 2026, 10, 200000, "demo-seed")
+    butce_kaydet("gursar_mimarlik", "Göktürk Okulu", "740", 2026, 10, 120000, "demo-seed")
     config_path = root / "veri" / "demo_seed_manifest.json"
     from master_data import onbellegi_temizle
     onbellegi_temizle()

@@ -21,11 +21,16 @@ Asistanı:` satırından alınır.
 
 ## Premium sentetik veri ve Qwen
 
-Başlatıcı, C:\Temp altında 4 faaliyet, 6 proje, 15 cari ve 229 sentetik
-hareket içeren tek MAIN + tek BACKUP Excel ile SQLite defteri oluşturur.
+Başlatıcı, C:\Temp altında 4 faaliyet, 6 proje, 15 cari ve 231 sentetik
+hareket içeren tek MAIN + tek BACKUP Excel ile SQLite defteri oluşturur. Veri
+setinde zarar eden CFO Platformu, Ekim bütçe aşımı, geçmiş/gelecek vadeler,
+çoklu para birimi ve 13 haftalık nakit planı bulunur.
 Demo banner'ı verinin sentetik olduğunu ve yerel Qwen bağlantı durumunu gösterir.
 Ollama kullanılamazsa deterministik finans motoru açıkça yedek olarak çalışır.
 Gerçek Excel, OneDrive ve üretim servisi bu akışta okunmaz.
+
+Başlatıcı Python 3.12'nin gerçek yorumlayıcı PID'sini izler ve seed işlemi için
+60 saniyeye kadar bekler; `STOP_TOUCHE_DEMO.ps1` yalnızca bu PID'yi durdurur.
 
 ## Durdurma
 
