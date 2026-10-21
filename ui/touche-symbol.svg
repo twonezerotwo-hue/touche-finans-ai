@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 160" role="img" aria-labelledby="title">
+  <title>Touché sembolü</title>
+  <g fill="none" stroke="#24c7b1" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke-width="7" d="M60 10C32 10 10 32 10 60v43c0 27 22 49 50 49s50-22 50-49V60"/>
+    <path stroke-width="7" d="M60 28c-18 0-33 14-33 32v43c0 18 15 33 33 33s33-15 33-33V60c0-18-15-32-33-32Z"/>
+    <path stroke-width="7" d="M60 47c-9 0-17 7-17 17v39c0 9 8 17 17 17s17-8 17-17V64"/>
+    <path stroke-width="6" d="M47 67h26M60 67v39"/>
+    <path stroke-width="5" d="m79 12 8-8"/>
+  </g>
+</svg>

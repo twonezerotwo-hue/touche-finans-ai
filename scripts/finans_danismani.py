@@ -135,6 +135,15 @@ def _kredi_taksitleri():
                 islem_turu, tutar = satir[0], satir[2]
                 taksit_id, durum, onay = satir[13], satir[15], satir[22]
                 taksit_id = str(taksit_id or "").strip()
+                # Sohbet/CFO kayıtlarında Bağlantı ID bazen boş kalabilir;
+                # açıklamadaki KRD-xxx-yy kimliği yine de taksitin ödendiğini
+                # kesin olarak gösterir. Aksi halde ödenen taksit tekrar
+                # "Öncelikli ödemeler" listesine girer.
+                if not taksit_id:
+                    aciklama = str(satir[17] or "")
+                    eslesme = re.search(r"\bKRD-[A-Z0-9]+-\d+\b", aciklama, flags=re.IGNORECASE)
+                    if eslesme:
+                        taksit_id = eslesme.group(0).upper()
                 if not taksit_id or _norm(islem_turu) != _norm("Kredi Taksit Ödemesi"):
                     continue
                 durum = _norm(durum)

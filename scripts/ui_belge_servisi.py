@@ -264,6 +264,23 @@ def ozet(token):
     }
 
 
+def _taslak_kimligi(item):
+    """Return a stable retry identity for queue entries, when available.
+
+    A repeated CFO request can leave an older pending draft beside the already
+    committed draft.  The source hash and normalized command together identify
+    a retry of the same document; a same-value but genuinely separate payment
+    normally has a different source hash or command and remains visible.
+    """
+    hazir = item.get("hazir") or {}
+    kaynak_hash = str(hazir.get("belge_hash") or "").strip()
+    komut = str(hazir.get("normalize_komut") or "").strip()
+    firma = str(hazir.get("firma_key") or "").strip().casefold()
+    if not kaynak_hash or not komut or not firma:
+        return None
+    return kaynak_hash, komut, firma
+
+
 def listele(kaynak_turu="belge", aktor=None, faaliyetler=None, yonetici=False):
     """List queue items subject to owner/activity scope filtering.
 
@@ -274,9 +291,21 @@ def listele(kaynak_turu="belge", aktor=None, faaliyetler=None, yonetici=False):
     aktor_norm = str(aktor or "").strip().casefold()
     kapsam = {str(x).strip().casefold() for x in (faaliyetler or [])}
     with _LOCK:
+        tamamlanan = {
+            kimlik
+            for item in _BEKLEYEN.values()
+            if item.get("durum") == "TAMAMLANDI"
+            for kimlik in [_taslak_kimligi(item)]
+            if kimlik is not None
+        }
         sonuc = []
         for token, item in _BEKLEYEN.items():
             if kaynak_turu is not None and item.get("kaynak_turu", "belge") != kaynak_turu:
+                continue
+            # Do not keep showing a retry of a document that has already been
+            # committed.  The queue record is preserved for audit/review; only
+            # the user-facing pending list is de-duplicated.
+            if item.get("durum") == "ONAY_BEKLIYOR" and _taslak_kimligi(item) in tamamlanan:
                 continue
             hazir = item.get("hazir") or {}
             firma = str(hazir.get("firma_key") or "").strip().casefold()

@@ -109,6 +109,28 @@ class UiBelgeTestleri(unittest.TestCase):
         self.assertEqual(sonuc["onay"]["mevcut"], 1)
         self.assertEqual(sonuc["onay"]["gerekli"], 2)
 
+    def test_tamamlanan_cfo_taslaginin_ayni_retrysi_bekleyenlerde_gosterilmez(self):
+        ortak = {
+            "firma_key": "gursar_mimarlik",
+            "tur": "sohbet_kaydi",
+            "belge_hash": "aynı-kaynak-hash",
+            "normalize_komut": "COUNTERPARTY_PAYMENT|gursar|25755.79|TL",
+            "veri": {"kayitlar": []},
+            "dogrulama": {"durum": "PASS", "skor": 100, "hatalar": [], "uyarilar": []},
+        }
+        belge._BEKLEYEN = {
+            "pending": {
+                "token": "pending", "durum": "ONAY_BEKLIYOR", "olusturma": "2026-10-18T11:46:22",
+                "kaynak_turu": "sohbet", "hazir": dict(ortak),
+            },
+            "committed": {
+                "token": "committed", "durum": "TAMAMLANDI", "olusturma": "2026-10-18T11:47:08",
+                "kaynak_turu": "sohbet", "hazir": dict(ortak),
+            },
+        }
+        sonuc = belge.listele("sohbet", aktor="local-admin", yonetici=True)
+        self.assertEqual([x["token"] for x in sonuc], ["committed"])
+
 
 if __name__ == "__main__":
     unittest.main()

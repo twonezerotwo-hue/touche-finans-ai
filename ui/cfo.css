@@ -1,19 +1,20 @@
-/* CFO Operating System - arayuz stilleri. Mevcut yesil/beyaz dil korunur. */
+/* CFO Operating System - Touché logo paletiyle uyumlu arayüz stilleri. */
 :root {
-  --cfo-green: #0f5132;
-  --cfo-green-2: #14663f;
-  --cfo-mint: #e7f3ec;
-  --cfo-line: #d9e4dc;
-  --cfo-text: #17332a;
-  --cfo-muted: #5c7268;
-  --cfo-amber: #b8860b;
-  --cfo-red: #b23a3a;
-  --cfo-blue: #2f6f8f;
+  --cfo-green: #168f83;
+  --cfo-green-2: #1aa696;
+  --cfo-mint: #e4f7f4;
+  --cfo-line: #d5e6e3;
+  --cfo-text: #172a28;
+  --cfo-muted: #617572;
+  --cfo-amber: #b77920;
+  --cfo-red: #b6404c;
+  --cfo-blue: #2d7895;
 }
 
 .cfo-nav {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 6px;
   padding: 10px 20px;
   background: #fff;
@@ -65,6 +66,9 @@
 .cfo-provenance-panel { margin-top: 10px; padding: 10px; border: 1px solid var(--cfo-line); border-radius: 10px; background: #f7fbf9; grid-column: 1 / -1; }
 .cfo-provenance-head { font-weight: 700; color: var(--cfo-text); margin-bottom: 4px; }
 .cfo-provenance-list { margin: 4px 0; padding-left: 20px; font-size: 12px; color: var(--cfo-muted); }
+.cfo-provenance-item { margin: 6px 0; }
+.cfo-provenance-main { color: var(--cfo-text); }
+.cfo-provenance-accounts { margin-top: 2px; font-size: 11px; color: var(--cfo-muted); }
 .cfo-trend-up { color: var(--cfo-green); font-weight: 600; }
 .cfo-trend-down { color: var(--cfo-red); font-weight: 600; }
 
@@ -96,6 +100,14 @@ table.cfo-table th, table.cfo-table td { padding: 9px 12px; text-align: left; bo
 table.cfo-table th { cursor: pointer; background: var(--cfo-mint); color: var(--cfo-green); user-select: none; position: sticky; top: 0; }
 table.cfo-table td.num, table.cfo-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.cfo-table tr:hover td { background: #f7fbf8; }
+.cfo-report-legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 8px 0 12px; color: var(--cfo-muted); font-size: 12px; }
+.cfo-legend-inflow { color: #087f5b; }
+.cfo-legend-outflow { color: #bd3030; }
+.cfo-legend-debt { color: #b46609; }
+.cfo-table td.cfo-flow-in, .cfo-table td.cfo-account-receivable, .cfo-table td.cfo-balance-asset { color: #087f5b; font-weight: 600; }
+.cfo-table td.cfo-flow-out, .cfo-table td.cfo-account-payable { color: #bd3030; font-weight: 600; }
+.cfo-table td.cfo-flow-debt, .cfo-table td.cfo-balance-debt { color: #b46609; font-weight: 600; }
+.cfo-table td.cfo-flow-cost { color: #bd3030; font-weight: 600; }
 
 .cfo-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
 .cfo-card { background: #fff; border: 1px solid var(--cfo-line); border-radius: 12px; padding: 16px; }
@@ -153,3 +165,32 @@ table.cfo-table tr:hover td { background: #f7fbf8; }
 .cfo-row-link { cursor: pointer; }
 .cfo-card-static { cursor: default; }
 .risk-gauge { --score: 0; }
+
+/* CFO alt sayfaları da ana panelle aynı koyu Touché temasını kullanır. */
+:root {
+  --cfo-green: #24c7b1;
+  --cfo-green-2: #35d8c2;
+  --cfo-mint: #173936;
+  --cfo-line: #294743;
+  --cfo-text: #e8f5f2;
+  --cfo-muted: #91aaa6;
+  --cfo-amber: #e7a14d;
+  --cfo-red: #ee6974;
+  --cfo-blue: #76c5ee;
+}
+.cfo-app h2,.cfo-kpi .value,.cfo-card h3,.cfo-insight .t{color:var(--cfo-text)}
+.cfo-nav,.cfo-kpi,.cfo-table-wrap,.cfo-card,.cfo-insight,.cfo-question{background:#142426}
+.cfo-nav button{background:#132729;color:#d8ece8;border-color:#315651}
+.cfo-nav button:hover,.cfo-chip:hover:not(:disabled){background:#1a403d}
+.cfo-kpi,.cfo-table-wrap,.cfo-card,.cfo-insight,.cfo-question{border-color:var(--cfo-line);box-shadow:0 12px 30px rgba(0,0,0,.18)}
+.cfo-kpi:hover{box-shadow:0 12px 30px rgba(0,0,0,.28)}
+.cfo-provenance-panel{background:#122527;border-color:var(--cfo-line)}
+.cfo-toolbar input[type=search],.cfo-toolbar input[type=number],.cfo-scenario-grid input,.cfo-scenario-grid select,.cfo-input{background:#0f1d1f;color:var(--cfo-text);border-color:var(--cfo-line)}
+.cfo-toolbar button.ghost,.cfo-chip{background:#163031;color:var(--cfo-green)}
+.cfo-table-wrap{overflow-x:auto}.cfo-table-wrap table,.cfo-table-wrap td{color:var(--cfo-text)}
+table.cfo-table th{background:#183d3a;color:var(--cfo-green)}
+table.cfo-table tr:hover td{background:#1a3735}
+.cfo-badge.healthy{background:#183d37;color:#72e0c9;border-color:#34786d}.cfo-badge.warning{background:#4b3423;color:#f0b46d;border-color:#855d35}.cfo-badge.danger{background:#48272d;color:#ff9aa1;border-color:#7d3e47}.cfo-badge.na{background:#203233;color:#b6cbc7;border-color:#3b5956}.cfo-badge.info{background:#173646;color:#8ed3f4;border-color:#3a6e83}
+.cfo-error{background:#48272d;color:#ff9aa1}
+.cfo-skeleton{background:linear-gradient(90deg,#142426,#1e3a3a,#142426);background-size:200% 100%}
+.cfo-chip{border-color:var(--cfo-green)}

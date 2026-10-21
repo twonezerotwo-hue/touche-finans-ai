@@ -153,7 +153,8 @@
       sayfa.forEach((r) => {
         const tr = el("tr");
         gorunur.forEach((c) => {
-          const td = el("td", { class: c.num ? "num" : "" });
+          const cellClass = typeof c.cellClass === "function" ? c.cellClass(r) : (c.cellClass || "");
+          const td = el("td", { class: [c.num ? "num" : "", cellClass].filter(Boolean).join(" ") });
           if (c.badge) td.appendChild(badge(c.badge(r), c.badgeText ? c.badgeText(r) : null));
           else td.textContent = c.format ? c.format(r) : (r[c.key] ?? "");
           tr.appendChild(td);
@@ -235,6 +236,7 @@
   async function render(view, params) {
     aktif = view;
     sonHash = location.hash;
+    document.body.classList.toggle("cfo-panel-page", view === "panel");
     renderNav();
     const a = app(), m = mainEl();
     if (view === "panel") {
@@ -303,7 +305,7 @@
 /* === Gorunum tanimlari: Holding -> Faaliyet -> Proje (tiklanabilir, deterministik metrikler) === */
 (function () {
   const C = window.CFO;
-  const { t, el, api, qs, dataTable, kpiCard, fmtKurus, fmtPct } = C;
+  const { t, el, api, qs, faaliyet, dataTable, kpiCard, fmtKurus, fmtPct } = C;
   const kayit = window.CFOregister;
   const DNA = "DATA_NOT_AVAILABLE";
 
@@ -319,13 +321,25 @@
     return { faaliyet: scope ? scope.getAttribute("data-faaliyet") : faaliyet(), proje: project && project.getAttribute("data-proje") };
   }
   function provenancePanel(result, host, metricId, scope) {
+    const fmtEvidenceKurus = (value) => "₺" + (Number(value || 0) / 100).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const panel = el("div", { class: "cfo-provenance-panel", "data-provenance": metricId });
     panel.appendChild(el("div", { class: "cfo-provenance-head", text: `${result.metric_name} · ${result.reconciliation_status}` }));
     panel.appendChild(el("p", { class: "cfo-sub", text: `Formül: ${result.formula}` }));
     if (result.warning) panel.appendChild(el("div", { class: "cfo-insight WARNING", text: result.warning }));
-    const rows = (result.source_transactions || []).map((s) => `${s.date || "tarih yok"} · ${s.counterparty || "cari yok"} · ${s.amount_kurus / 100} TL · ${s.voucher_id || "fiş yok"}`);
+    const rows = (result.source_transactions || []).map((s) => {
+      const li = el("li", { class: "cfo-provenance-item" });
+      const sourceCurrency = s.currency && s.currency !== "TL" ? ` (${s.currency} kaynak)` : "";
+      li.appendChild(el("div", { class: "cfo-provenance-main", text: `${s.date || "tarih yok"} · ${s.counterparty || "cari yok"} · ${fmtEvidenceKurus(s.amount_kurus)}${sourceCurrency} · ${s.voucher_id || "fiş yok"}` }));
+      const accounts = s.accounts || [];
+      if (accounts.length) {
+        li.appendChild(el("div", { class: "cfo-provenance-accounts", text: "Hesaplar: " + accounts.map((a) => `${a.code} ${a.name} · Borç ${fmtEvidenceKurus(a.debit_kurus)} · Alacak ${fmtEvidenceKurus(a.credit_kurus)}`).join(" | ") }));
+      } else {
+        li.appendChild(el("div", { class: "cfo-provenance-accounts", text: "Hesap detayı bulunamadı" }));
+      }
+      return li;
+    });
     panel.appendChild(el("p", { class: "cfo-sub", text: `Kaynak: ${result.source_count} işlem · Gösterilen sayfa ${result.pagination.page}/${Math.max(1, result.pagination.pages)}` }));
-    if (rows.length) panel.appendChild(el("ul", { class: "cfo-provenance-list" }, rows.map((x) => el("li", { text: x }))));
+    if (rows.length) panel.appendChild(el("ul", { class: "cfo-provenance-list" }, rows));
     else panel.appendChild(el("p", { class: "cfo-sub", text: "Bu metrik için kaynak işlem bulunamadı." }));
     const pages = result.pagination.pages || 1;
     if (pages > 1) {
@@ -352,7 +366,7 @@
     const metricId = METRIC_ID[baslik];
     if (metricId) {
       const button = el("button", { type: "button", class: "ghost cfo-evidence-button", text: "Kaynağı gör" });
-      button.addEventListener("click", () => loadProvenance(kart, metricId, provenanceScope(kart), 1));
+      button.addEventListener("click", (event) => { event.stopPropagation(); loadProvenance(kart, metricId, provenanceScope(kart), 1); });
       kart.appendChild(button);
     }
     return kart;
@@ -848,7 +862,19 @@
     if (d.kaynak) box.appendChild(el("p", { class: "cfo-sub", text: "Kaynak: " + d.kaynak + (d.denk === false ? " · ⚠ requires accounting mapping" : "") }));
     if (Array.isArray(d.kalemler)) {
       const keys = Object.keys(d.kalemler[0] || {});
-      box.appendChild(dataTable(keys.map((k) => ({ key: k, label: k, num: typeof (d.kalemler[0] || {})[k] === "number" })), d.kalemler));
+      const trial = d.tip === "trial_balance";
+      if (trial) {
+        box.appendChild(el("div", { class: "cfo-report-legend" }, [
+          el("span", { class: "cfo-legend-inflow", text: "● Yeşil: alacak/tahsilat ve kasa-banka girişi" }),
+          el("span", { class: "cfo-legend-outflow", text: "● Kırmızı: ödeme, borç kapama ve çıkış" }),
+          el("span", { class: "cfo-legend-debt", text: "● Turuncu: yeni borç/finansman" }),
+        ]));
+      }
+      const columns = keys.map((k) => ({
+        key: k, label: k, num: typeof (d.kalemler[0] || {})[k] === "number",
+        cellClass: trial ? (r) => trialBalanceCellClass(k, r) : undefined,
+      }));
+      box.appendChild(dataTable(columns, d.kalemler));
       return box;
     }
     if (d.kpi) {
@@ -861,6 +887,22 @@
     diger.forEach(([k, v]) => rows.appendChild(el("div", { class: "row" }, [el("span", { text: k }), el("span", { text: String(v) })])));
     box.appendChild(rows);
     return box;
+  }
+
+  function trialBalanceCellClass(key, row) {
+    const type = String(row.hesap_tipi || "").toUpperCase();
+    if (key === "hesap") {
+      if (String(row.hesap) === "120") return "cfo-account-receivable";
+      if (["300", "320", "331", "336"].includes(String(row.hesap))) return "cfo-account-payable";
+      return "";
+    }
+    if (!["borc", "alacak", "bakiye"].includes(key)) return "";
+    if (key === "bakiye") return Number(row.bakiye || 0) < 0 ? "cfo-balance-debt" : "cfo-balance-asset";
+    if (type === "VARLIK") return key === "borc" ? "cfo-flow-in" : "cfo-flow-out";
+    if (type === "YUKUMLULUK") return key === "borc" ? "cfo-flow-out" : "cfo-flow-debt";
+    if (type === "GELIR") return key === "borc" ? "cfo-flow-out" : "cfo-flow-in";
+    if (type === "GIDER") return key === "borc" ? "cfo-flow-cost" : "cfo-flow-in";
+    return "";
   }
 
   kayit("yonetim", async (root) => {

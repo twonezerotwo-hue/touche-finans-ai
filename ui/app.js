@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const money = new Intl.NumberFormat("tr-TR", {style:"currency", currency:"TRY", maximumFractionDigits:2});
-const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, cfoContext:null, activeDraftToken:null, cfoTaslak:null, renderedDocumentTokens:new Set()};
+const state = {data:null, session:null, projectData:null, lastIntent:null, lastContextQuestion:null, cfoContext:null, activeDraftToken:null, cfoTaslak:null, renderedDocumentTokens:new Set(), decisionRotation:null};
 
 function formatAmount(value,currency="TL"){
   const amount=Number(value||0);const code=String(currency||"TL").trim().toUpperCase();
@@ -15,6 +15,60 @@ function setMoney(id,value,polarity=false){ const el=$(id); el.textContent=money
 function escStatus(status){ return status==="Gecikmiş"?"danger":((status.includes("gün")||status.includes("gun")||status==="Vade eksik")?"warn":""); }
 function button(label,className,action){ const b=document.createElement("button"); b.type="button"; b.textContent=label; if(className)b.className=className; b.addEventListener("click",action); return b; }
 function setAIStatus(text,busy=false){ const el=$("aiStatus"); el.replaceChildren(); const dot=document.createElement("i"); if(busy)dot.style.background="#d8a94b"; el.append(dot,document.createTextNode(` ${text}`)); }
+
+function stopDecisionRotation(){
+  const rotation=state.decisionRotation;
+  if(!rotation)return;
+  clearInterval(rotation.timer); clearTimeout(rotation.transitionTimer);
+  if(rotation.card){
+    rotation.card.removeEventListener("mouseenter",rotation.pause);
+    rotation.card.removeEventListener("mouseleave",rotation.resume);
+    rotation.card.removeEventListener("focusin",rotation.pause);
+    rotation.card.removeEventListener("focusout",rotation.resume);
+  }
+  state.decisionRotation=null;
+}
+
+function decisionInsights(d){
+  const plan=d.nakit_plani||{}, payments=Array.isArray(d.odemeler)?d.odemeler:[], insights=[];
+  const tl=value=>money.format(Number(value||0));
+  if(d.ana_karar)insights.push(d.ana_karar);
+  const overdue=payments.filter(x=>Number(x.kalan_gun)<0);
+  if(overdue.length){
+    const total=overdue.reduce((sum,x)=>sum+Number(x.tutar||0),0);
+    const names=overdue.slice(0,2).map(x=>x.cari).join(" ve ");
+    insights.push(`Gecikmiş ${names} ödemeleri toplam ${tl(total)}; bu kalemleri önce planla.`);
+  }
+  const next=payments.find(x=>Number(x.kalan_gun)>=0);
+  if(next)insights.push(`${next.cari} için ${tl(next.tutar)} ödeme ${next.vade||"yaklaşan vadede"}; nakit planında yer ayır.`);
+  const expected=Number(plan["30_gun_beklenen_tahsilat"]||0);
+  if(expected>0)insights.push(`Önümüzdeki 30 günde ${tl(expected)} tahsilat bekleniyor; tahsilat takibini erkene çek.`);
+  else insights.push("Önümüzdeki 30 gün için beklenen tahsilat görünmüyor; nakit tamponunu koru.");
+  const reserve=Number(plan.rezerv||0), capacity=Number(plan.yatirim_kapasitesi||0);
+  if(capacity>0)insights.push(`Rezerv sonrası güvenli yatırım alanı ${tl(capacity)}; yatırım kararında ${tl(reserve)} işletme rezervini koru.`);
+  return [...new Set(insights)].slice(0,6);
+}
+
+function startDecisionRotation(d){
+  const title=$("anaKarar"), card=title?.closest(".decision-card");
+  stopDecisionRotation();
+  if(!title||!card)return;
+  const items=decisionInsights(d); if(!items.length)return;
+  title.textContent=items[0];
+  if(items.length<2)return;
+  const rotation={card,items,index:0,timer:null,transitionTimer:null,paused:false};
+  const advance=()=>{
+    if(rotation.paused)return;
+    rotation.index=(rotation.index+1)%rotation.items.length;
+    title.classList.add("decision-switching");
+    rotation.transitionTimer=setTimeout(()=>{title.textContent=rotation.items[rotation.index];title.classList.remove("decision-switching");},190);
+  };
+  rotation.pause=()=>{rotation.paused=true;clearInterval(rotation.timer);};
+  rotation.resume=()=>{rotation.paused=false;clearInterval(rotation.timer);rotation.timer=setInterval(advance,6500);};
+  card.addEventListener("mouseenter",rotation.pause); card.addEventListener("mouseleave",rotation.resume);
+  card.addEventListener("focusin",rotation.pause); card.addEventListener("focusout",rotation.resume);
+  rotation.timer=setInterval(advance,6500); state.decisionRotation=rotation;
+}
 
 async function jsonRequest(url,options={}){
   const res=await fetch(url,options); let data={}; try{data=await res.json();}catch(_){ }
@@ -65,7 +119,7 @@ async function loadDashboard(){
   savePrefs(); const p=profile();
   const q=new URLSearchParams({faaliyet:$("faaliyet").value,risk:p.risk,rezerv_gun:p.rezerv_gun,yatirim_vadesi_ay:p.yatirim_vadesi_ay});
   const d=await jsonRequest(`/api/dashboard?${q}`); state.data=d;
-  $("anaKarar").textContent=d.ana_karar; $("veriNotu").textContent=d.veri_notu;
+  startDecisionRotation(d); $("veriNotu").textContent=d.veri_notu;
   setMoney("yatirimKapasitesi",d.nakit_plani.yatirim_kapasitesi); setMoney("nakit",d.ozet.nakit); setMoney("alacak",d.ozet.alacak); setMoney("borc",d.ozet.borc); setMoney("net",d.ozet.net,true);
   $("rezervNotu").textContent=`${d.profil.rezerv_gun} günlük hedef rezerv`;
   $("tahsilatNotu").textContent=`30 günde ${money.format(d.nakit_plani["30_gun_beklenen_tahsilat"]||0)} bekleniyor`;
@@ -186,7 +240,7 @@ function renderEvidence(data){
 }
 function renderChatDraft(doc){
   if(!doc)return; state.activeDraftToken=doc.token;
-  const card=document.createElement("article");card.className="chat-draft";
+  const card=document.createElement("article");card.className="chat-draft";card.dataset.token=doc.token||"";
   const head=document.createElement("div");head.className="chat-draft-head";
   const title=document.createElement("strong");title.textContent="Onay bekleyen kayıt taslağı";
   const validation=document.createElement("span");validation.className=`validation ${doc.dogrulama?.durum||"FAIL"}`;validation.textContent=`${doc.dogrulama?.durum||"FAIL"} ${doc.dogrulama?.skor||0}/100`;head.append(title,validation);card.appendChild(head);
@@ -235,6 +289,15 @@ async function chatDraftAction(token,action,card=null){
     const parola=action==="onay"?await requestApprovalPassword():null;if(action==="onay"&&parola===null)return;
     const result=await jsonRequest(`/api/belge/${token}/${action}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(action==="onay"?{parola}:{})});
     state.activeDraftToken=null;state.cfoTaslak=null;
+    const draftCards=[card,...document.querySelectorAll(`.chat-draft[data-token="${CSS.escape(token)}"]`)].filter(Boolean);
+    draftCards.forEach((draftCard)=>{
+      const actions=draftCard.querySelector(".chat-draft-actions");
+      if(actions) actions.replaceWith(Object.assign(document.createElement("div"),{className:"doc-meta",textContent:action==="onay"?"Durum: TAMAMLANDI":"Durum: REDDEDİLDİ"}));
+      const title=draftCard.querySelector(".chat-draft-head strong");
+      if(title) title.textContent=action==="onay"?"Kayıt onaylandı":"Taslak iptal edildi";
+      const validation=draftCard.querySelector(".validation");
+      if(validation){ validation.className="validation PASS"; validation.textContent=action==="onay"?"TAMAMLANDI":"İPTAL"; }
+    });
     addMessage(action==="onay"?"Kayıt onaylandı; master Excel ve merkez finans defteri güncellendi.":"Taslak iptal edildi; Excel'e yazılmadı.","assistant");
     await Promise.all([loadDashboard(),loadProjectItems(),loadDocuments()]);
   }catch(e){addMessage(`Kayıt işlemi başarısız: ${e.message}`,"assistant");}

@@ -125,6 +125,28 @@ class FinansDanismaniTestleri(unittest.TestCase):
         self.assertEqual(taksitler[0]["taksit_id"], "KRD-001-01")
         self.assertAlmostEqual(taksitler[0]["tutar"], 19_954.00, places=2)
 
+    def test_excel_kredi_plani_aciklamadaki_taksit_id_ile_de_odenen_taksiti_duser(self):
+        with tempfile.TemporaryDirectory() as d:
+            yol = Path(d) / "master.xlsx"
+            wb = Workbook()
+            wb.remove(wb.active)
+            ayarlar = wb.create_sheet("99_Ayarlar")
+            ayarlar["AD3"], ayarlar["AE3"] = "TL", 1
+            ayarlar["AD4"], ayarlar["AE4"] = "EUR", 55
+            ledger = wb.create_sheet("03_Kayıt Merkezi")
+            ledger["G6"], ledger["I6"], ledger["V6"], ledger["X6"] = (
+                "Kredi Taksit Ödemesi", 462.8, "Gerçekleşti",
+                "Kredi Veren Banka\nKRD-001-01 · 2026-10-20",
+            )
+            plan = wb.create_sheet("04_Kredi & Vade")
+            plan["A13"], plan["B13"], plan["C13"] = "KRD-001-01", "KRD-001", "Gürsar İnşaat"
+            plan["D13"], plan["G13"], plan["J13"] = datetime(2026, 10, 20), 462.8, "EUR"
+            wb.save(yol)
+            wb.close()
+            with AnaExcelYonlendirme(yol, Path(d) / "yedek" / "master - YEDEK.xlsx"):
+                taksitler = fd._kredi_taksitleri()
+        self.assertEqual(taksitler, [])
+
     def test_gelismis_pano_risk_projeksiyon_ve_veri_kalitesi_uretir(self):
         pano = fd.karar_panosu("tum", {"rezerv_gun": 30}, bugun=date(2026, 9, 27))
         self.assertEqual(len(pano["nakit_projeksiyonu"]), 13)

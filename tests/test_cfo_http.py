@@ -195,6 +195,8 @@ class CfoHttpTestleri(CfoTestTemeli):
         self.assertIn("Ödeme =", d["formula"])
         self.assertIn(d["reconciliation_status"], {"CONSISTENT", "INCONSISTENT", "PARTIALLY_VERIFIED"})
         self.assertEqual(d["source_transactions"][0]["excel_record_id"], "PROV-1")
+        self.assertTrue(d["source_transactions"][0]["accounts"])
+        self.assertEqual(d["source_transactions"][0]["accounts"][0]["code"], "320")
         self.assertEqual(d["pagination"]["page_size"], 1)
         self._kimlik("prov-viewer@x", "PROJECT_MANAGER", ["gursar_mimarlik"])
         st, _ = self.req("GET", "/api/dashboard/provenance?metric=payments&faaliyet=touche_holding", kimlik="prov-viewer@x")

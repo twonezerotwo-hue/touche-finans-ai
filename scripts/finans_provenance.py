@@ -263,6 +263,8 @@ def metric_provenance(
             "amount_kurus": contribution, "currency": cur["currency"],
             "conversion": {"rate": cur["rate"], "target_currency": "TL", "normalized": True},
         })
+        if f.get("hesaplar"):
+            sources[-1]["accounts"] = list(f["hesaplar"])
     status, status_detail = _status(comparison, freshness)
     start = (page - 1) * page_size
     shown = sources[start:start + page_size]
@@ -292,5 +294,20 @@ def from_database(metric: str, **kwargs) -> dict[str, Any]:
     """Salt-okunur merkezi defterden provenance üretir."""
     with pf.okuma_baglantisi() as con:
         fisler, _ = pf._satirlari_oku(con, kwargs.pop("faaliyet", None))
+        ids = list(fisler)
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            rows = con.execute(
+                "SELECT s.fis_id, s.hesap_kodu, h.ad, s.borc_kurus, s.alacak_kurus "
+                f"FROM fis_satirlari s JOIN hesaplar h ON h.kod=s.hesap_kodu "
+                f"WHERE s.fis_id IN ({placeholders}) ORDER BY s.fis_id, s.satir_no",
+                ids,
+            ).fetchall()
+            for row in rows:
+                fisler[row["fis_id"]].setdefault("hesaplar", []).append({
+                    "code": row["hesap_kodu"], "name": row["ad"],
+                    "debit_kurus": int(row["borc_kurus"] or 0),
+                    "credit_kurus": int(row["alacak_kurus"] or 0),
+                })
     return metric_provenance(metric, fisler, **kwargs)
 

@@ -273,7 +273,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         dosya = {
-            "/": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/favicon.svg": "favicon.svg",
+            "/": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/favicon.svg": "favicon.svg", "/touche-symbol.svg": "touche-symbol.svg", "/touche-symbol.png": "touche-symbol.png",
             "/cfo.js": "cfo.js", "/cfo.css": "cfo.css", "/i18n.js": "i18n.js",
             "/onboarding.js": "onboarding.js",
         }.get(parsed.path)
