@@ -26,7 +26,7 @@ _AY_DESENI = "|".join(AYLAR)
 GUNLER = {"pazartesi": 0, "sali": 1, "carsamba": 2, "persembe": 3, "cuma": 4, "cumartesi": 5, "pazar": 6}
 _GUN_DESENI = "|".join(GUNLER)
 GUN_ADLARI = ["pazartesi", "salı", "çarşamba", "perşembe", "cuma", "cumartesi", "pazar"]
-BIRIM_KELIMELER = ("gun", "ay", "adet", "kez", "saat", "kayit", "hafta", "yil", "kisi", "tane", "metre", "m2")
+BIRIM_KELIMELER = ("gun", "gunluk", "ay", "aylik", "adet", "kez", "saat", "kayit", "hafta", "haftalik", "yil", "yillik", "kisi", "tane", "metre", "m2")
 
 
 def _sade(metin) -> str:

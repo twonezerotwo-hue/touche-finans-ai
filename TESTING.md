@@ -11,6 +11,13 @@ python -m mypy scripts/excel_deposu.py scripts/excel_operasyon.py scripts/excel_
 ```
 Windows: `py -3.12 -m pytest -q`. The old `python -m unittest discover -s tests` also works for the non-browser tests.
 
+## PR-21 sentetik premium demo
+
+tests/test_demo_seed.py izole 4 faaliyet/6 proje/15 cari veri setini, 150+ fişi,
+MAIN-BACKUP checkpoint eşitliğini ve idempotent reuse davranışını doğrular.
+tests/test_demo_local.py yerel Ollama yokken güvenli deterministik yedeği doğrular.
+Bu testler yalnızca geçici kök kullanır ve üretim finans yollarına erişmez.
+
 Result at the time of writing: **408+ passed, 2 skipped** (a skip needs a copy of a production DB, see below).
 Baseline on the original commit: 6 modules failed at import; with that worked around, 126 passed / 21 failed.
 

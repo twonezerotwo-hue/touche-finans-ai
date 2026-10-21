@@ -72,6 +72,15 @@ kilitli workbook ve kapsam dışı kimlik senaryoları kapsanır. LLM/ağ çağr
 test akışında zorunlu değildir; bilinmeyen veya belirsiz alanlar kayıt açmadan
 soru durumunda kalır.
 
+### PR-21 izole Premium CFO demosu
+
+feat/premium-cfo-live-local-demo dalındaki başlatıcı C:\Temp altında yalnızca
+sentetik veri üretir: 4 faaliyet, 6 proje, 15 cari ve 229 finans hareketi.
+MAIN ve BACKUP workbook aynı başlangıç checkpoint'idir; SQLite journal da aynı
+sentetik işlemleri taşır. Yerel Ollama qwen3:8b probe'u gerçek JSON yanıtıyla
+doğrulanır; model kullanılamazsa deterministik finans motoru açıkça yedektir.
+Bu kanıt gerçek Excel, OneDrive veya üretim servisi doğrulaması değildir.
+
 ## 7. Test ve CI kanıtı
 
 - Yerel tam pytest: **456 geçti, 8 atlandı, 352 alt test**, 136.00 saniye.
