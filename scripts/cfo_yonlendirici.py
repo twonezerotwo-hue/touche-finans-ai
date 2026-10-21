@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 
+import cfo_batch
 import cfo_intelligence as CI
 import cfo_niyet as N
 import cfo_sohbet
@@ -130,6 +131,12 @@ def sohbet_isle(body: dict, oturum: dict, rol: str, katalog=None, bugun=None):
         else:
             cevap = "Mesajı bağımsız işlem taslaklarına ayırdım. Her satır ayrı doğrulanıp onaylanmalıdır.\n"
         cevap += "\n" + "\n".join(satirlar) + "\nOnaydan önce Excel ve SQLite'a hiçbir şey yazılmadı."
+        if not zeka.clarification and zeka.intent == CI.FINANCIAL_DRAFT_REQUEST:
+            paket = cfo_batch.create(zeka, soru, aktor)
+            cevap += "\nPaket kimliği: " + paket["batch_id"] + "\nSatırları tek tek hazırlayıp mevcut şifreli onay akışına gönderebilirsiniz."
+            return {"cevap": cevap, "niyet": "coklu_kayit_paketi", "llm": "deterministik",
+                    "guven": "Yüksek", "cfo_intelligence": zeka.as_dict(), "cfo_batch": paket,
+                    "kanitlar": [], "aksiyonlar": [], "degisiklik_yapildi": False}
         return {"cevap": cevap, "niyet": "coklu_kayit_taslagi", "llm": "deterministik",
                 "guven": "Yüksek", "cfo_intelligence": zeka.as_dict(),
                 "kanitlar": [], "aksiyonlar": [], "degisiklik_yapildi": False}

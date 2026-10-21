@@ -23,6 +23,7 @@ if str(BASE_DIR / "scripts") not in sys.path:
 from finans_danismani import asistana_sor, faaliyetler, karar_panosu, senaryo_hesapla  # noqa: E402
 from config import ana_excel_yolu, yedek_excel_yolu  # noqa: E402
 import cfo_yonlendirici  # noqa: E402
+import cfo_batch  # noqa: E402
 import excel_deposu  # noqa: E402
 from kurumsal_finans import (  # noqa: E402
     banka_hareketi_eslestir, banka_mutabakat_adaylari, banka_mutabakat_listesi,
@@ -337,6 +338,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"taslaklar": belge_listele(
                 "sohbet", aktor=session.get("kimlik"), faaliyetler=session.get("faaliyetler"), yonetici=yonetici,
             )})
+        batch_parts = parsed.path.strip("/").split("/")
+        if len(batch_parts) == 4 and batch_parts[:3] == ["api", "cfo", "batch"] and batch_parts[3].startswith("batch-"):
+            return self._json(cfo_batch.get(batch_parts[3], session.get("kimlik")))
         if parsed.path == "/api/proje-kalemleri":
             q = parse_qs(parsed.query)
             if not self._kapsam_izinli(session, self._faaliyet_param(q)):
@@ -707,6 +711,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(sonuc)
             if yol == "/api/cfo/adim":
                 return self._json(cfo_yonlendirici.adim_isle(self._body(), session, self._rol(session)))
+            parts = yol.strip("/").split("/")
+            if len(parts) == 6 and parts[:3] == ["api", "cfo", "batch"] and parts[3].startswith("batch-"):
+                rol_yetki.kontrol(self._rol(session), "belge.yukle")
+                body = self._body()
+                batch_id, item_id, action = parts[3], parts[4], parts[5]
+                actor = session.get("kimlik") or "yerel_kullanici"
+                if action == "hazirla":
+                    return self._json(cfo_batch.prepare_item(batch_id, item_id, actor))
+                if action == "duzelt":
+                    return self._json(cfo_batch.correct_item(batch_id, item_id, str(body.get("metin") or ""), actor))
+                if action == "reddet":
+                    return self._json(cfo_batch.reject_item(batch_id, item_id, actor))
+                return self._json({"hata": "Geçersiz çoklu işlem eylemi."}, 400)
             if yol == "/api/excel/ac":
                 if not session.get("yerel"):
                     return self._json({"hata": "Excel yalnızca ana bilgisayarda doğrudan açılabilir."}, 403)

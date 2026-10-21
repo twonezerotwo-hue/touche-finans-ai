@@ -283,3 +283,31 @@ Gerçek Ollama/Qwen inference kalitesi, Excel masaüstü/OneDrive paylaşım kil
 off-site KMS anahtar sahipliği, canlı migration/restore, owner politika onayı
 ve kontrollü üretim dağıtımı hâlâ **NOT VERIFIED** olduğundan final karar
 **NOT_FULLY_VERIFIED** olarak kalır.
+
+## PR-20 Premium CFO çoklu işlem ve yerel demo kanıtı (2026-10-21)
+
+PR-19 dokümantasyon güncellemesi main'e `455a143810e1bc4ea8c8214261235797e2027a4a`
+olarak birleşti. PR-20 çalışma dalında aşağıdaki yeni sınır doğrulandı:
+
+- Bir mesajdaki bağımsız finansal maddeler kalıcı `cfo_batch` paketi altında
+  ayrı satırlara ayrılır; aynı kaynak metin tekrarında aynı `batch_id` döner.
+- Aynı faaliyet/proje/cari/tutar/para birimi/tarih/işlem kimliği taşıyan satır
+  `NEEDS_REVIEW` olur; yalnız tutarın aynı olması mükerrer sayılmaz.
+- Satır düzeltmesi deterministik olarak yeniden çözümlenir ve mükerrer kontrolü
+  tekrarlanır.
+- Satır hazırlama mevcut parola korumalı CFO kuyruğuna gider; Excel/SQLite'a
+  yazmaz. Gerçek yazım mevcut tekil onay rotasında kalır.
+- Odaklı batch suite: **6 passed**. CFO bağlam/HTTP odaklı suite: **35 passed,
+  2 subtests passed**. İzole tam suite: **521 passed, 8 skipped, 362 subtests**.
+- Ruff (yeni modüller), targeted mypy ve `node --check ui/app.js`: **PASS**.
+- Yerel Ollama mevcut: `qwen3:8b` sentetik JSON smoke **PASS**, 5.075 s. Bu
+  gerçek finans verisi veya üretim kalite ölçümü değildir.
+- Sentetik demo `C:\Temp\touche-finans-demo-20261021-0941` altında başlatıldı;
+  `/api/health` **PASS**, çoklu paket ve satır hazırlama **PASS**, demo workbook
+  satır sayısı yazım öncesi değişmedi. Demo dışındaki üretim yollarına erişim
+  **HAYIR**.
+
+PR-20 kanıtı CFO çoklu işlem güvenliğini genişletir; ancak tarayıcı E2E'si bu
+   dalda yeniden çalıştırılmadı, gerçek OneDrive/Excel paylaşım kilidi ve canlı
+   üretim rollout'u hâlâ **NOT VERIFIED**. Bu nedenle doğrulanmış ağırlıklı skor
+   **93/100 = 9.3/10** olarak korunur ve final karar **NOT_FULLY_VERIFIED**'dır.

@@ -189,6 +189,19 @@ focused suite `8 passed` oldu. Final local full suite `469 passed, 8 skipped,
 Gerçek Excel desktop share-mode, OneDrive cloud sync, canlı migration ve gerçek
 off-site provider **NOT VERIFIED** olarak kalır.
 
+## PR-20 çoklu CFO ve izole demo
+
+`tests/test_cfo_batch.py` çoklu işlem paketinin idempotency, satır bazlı
+mükerrer incelemesi, düzeltme, reddetme ve mevcut parola kuyruğuna yazmadan
+hazırlama davranışını doğrular. PR-20 odaklı sonuç **6 passed**; bağlam/HTTP
+odaklı sonuç **35 passed, 2 subtests**; izole tam sonuç **521 passed, 8 skipped,
+362 subtests**.
+
+Yerel demo yalnız sentetik veriyle `scripts/demo_local.py` ve
+`LOCAL_DEMO_GUIDE.md` üzerinden çalıştırılır. Demo kökü `C:\Temp` altında
+olmalı; `C:\ai-excel`, OneDrive ve gerçek finans dosyaları kesinlikle
+kullanılmamalıdır. Ollama smoke testi de yalnızca sentetik prompt ile yapılır.
+
 ## PR-14 operational resilience v2
 
 `tests/test_recovery_operations_v2.py` yalnız `tmp_path` altında çalışır ve
