@@ -191,6 +191,29 @@ function renderChatDraft(doc){
   }
   $("chat").appendChild(card);$("chat").scrollTop=$("chat").scrollHeight;
 }
+function renderCfoBatch(batch){
+  if(!batch||!batch.batch_id)return;
+  const card=document.createElement("article");card.className="chat-draft cfo-batch";
+  const head=document.createElement("div");head.className="chat-draft-head";
+  const title=document.createElement("strong");title.textContent="Çoklu işlem paketi · "+batch.batch_id;
+  const meta=document.createElement("span");meta.className="validation PASS";meta.textContent="Excel'e henüz yazılmadı";head.append(title,meta);card.appendChild(head);
+  (batch.items||[]).forEach(item=>{
+    const row=document.createElement("div");row.className="chat-draft-record";
+    const p=item.proposal||{};row.textContent=item.item_id+" · "+(p.activity||"Faaliyet eksik")+" · "+(p.project||"Proje eksik")+" · "+(p.counterparty||"Cari eksik")+" · "+(p.amount||"Tutar eksik")+" "+(p.currency||"")+" · "+item.status;card.appendChild(row);
+    const actions=document.createElement("div");actions.className="chat-draft-actions";
+    const prep=button("Onay taslağı hazırla","approve",async()=>{
+      prep.disabled=true;
+      try{const r=await jsonRequest("/api/cfo/batch/"+encodeURIComponent(batch.batch_id)+"/"+encodeURIComponent(item.item_id)+"/hazirla",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+        item.status=r.status; item.draft_id=r.draft_id; row.textContent=row.textContent.split(" · ").slice(0,-1).join(" · ")+" · "+item.status;
+        addMessage(item.status==="DRAFT_READY" ? item.item_id+" mevcut şifreli onay akışına hazırlandı. Excel'e henüz yazılmadı." : item.item_id+" için ek bilgi gerekiyor: "+(item.error||"kontrol edin"),"assistant");
+        if(item.status==="DRAFT_READY") await loadPendingChatDraft();
+      }catch(e){addMessage("Satır hazırlanamadı: "+e.message,"assistant");prep.disabled=false;}
+    });
+    const reject=button("Bu satırı reddet","reject",async()=>{try{const r=await jsonRequest("/api/cfo/batch/"+encodeURIComponent(batch.batch_id)+"/"+encodeURIComponent(item.item_id)+"/reddet",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});item.status=r.status;row.textContent=row.textContent.split(" · ").slice(0,-1).join(" · ")+" · "+item.status;reject.disabled=true;prep.disabled=true;}catch(e){addMessage("Satır reddedilemedi: "+e.message,"assistant");}});
+    actions.append(prep,reject);card.appendChild(actions);
+  });
+  $("chat").appendChild(card);$("chat").scrollTop=$("chat").scrollHeight;
+}
 async function loadPendingChatDraft(){
   const data=await jsonRequest("/api/sohbet-taslaklari");
   const pending=(data.taslaklar||[]).find(x=>x.durum==="ONAY_BEKLIYOR");
@@ -211,6 +234,7 @@ async function chatDraftAction(token,action,card=null){
 
 /* ---- CFO sihirbazi: yapisal soru + tiklanabilir secenekler (LLM yok) ---- */
 function cfoYanitiIsle(d){
+  if(d.cfo_batch) renderCfoBatch(d.cfo_batch);
   if(d.cfo){ state.cfoTaslak = d.cfo.durum==="TOPLANIYOR" ? d.cfo.taslak_id : null; }
   if(d.taslak_kapat) state.cfoTaslak=null;
   if(d.cfo&&d.cfo.soru) renderCfoQuestion(d);

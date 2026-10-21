@@ -1,7 +1,7 @@
 invoice2data==1.0.1
 excel-parser @ git+https://github.com/knowledgestack/excel-parser.git@e513763cc359d91c7ad511ca2659acbb60593d10
 openpyxl==3.1.5
-Pillow==12.3.0
+Pillow==13.0.0
 pypdfium2==5.13.0
 python-telegram-bot==22.8
 requests==2.34.2
