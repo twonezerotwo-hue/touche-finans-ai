@@ -226,3 +226,16 @@ tercih yalnızca tarayıcı localStorage alanında tutulur. `Yardım turunu aç`
 ile tekrar başlatılabilir. `tests/test_onboarding_contract.py` bu davranışın
 API çağrısı veya finansal yazma yapmadığını doğrular; gerçek tarayıcı davranışı
 Playwright varsa `test_ui_tarayici.py` ile ayrıca çalışır.
+
+## PR-16–PR-18 güncel CI kanıtı (2026-10-19)
+
+Ana dal `882f958c5ff5a5b6aeff3473d2fb075f2a008720` için post-merge run
+`39266214714` başarılıdır: Ubuntu, Windows, dependency audit ve secret/path
+scan PASS. PR-18 run'ları `39265245135` ve `39265252885` de tüm kapılarda
+PASS olmuştur. İzole runner kanıtı üretim Excel'i veya OneDrive davranışı
+değildir.
+
+PR-18 yerel tam suite: **515 passed, 8 skipped, 362 subtests**. Skips opt-in
+üretim DB kopyası ve ortam bağımlı browser koşullarıdır. Focused suite
+**12 passed, 2 subtests**; hedefli Ruff, `mypy scripts/cfo_intelligence.py`
+ve `node --check ui/app.js` PASS.

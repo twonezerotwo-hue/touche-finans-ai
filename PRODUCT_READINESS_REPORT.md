@@ -241,3 +241,45 @@ restore → integrity check. Yeni paket **4 focused PASS** verdi. Gerçek model
 Son karar: **NOT_FULLY_VERIFIED**. 9.9/10 iddiası yapılmadı; gerçek
 OneDrive/Excel, canlı KMS/off-site, Ollama model sürümü/latansı, owner politika
 imzası ve kontrollü üretim rollout'u hâlâ ön koşuldur.
+
+## PR-16–PR-18 güncel kanıt eki (2026-10-19)
+
+Güncel ana dal: `882f958c5ff5a5b6aeff3473d2fb075f2a008720`.
+
+- PR-16 (`d302ec42`): vade/forecast tarih doğruluğu ve deterministik finansal
+  kanıt doğrulaması.
+- PR-17 (`ee7d2f9`): 3.000 sentetik Türkçe CFO değerlendirme corpus'u; train,
+  validation ve holdout template aileleri sızıntısızdır. Holdout'ta 998/998
+  intent, tutar ve para birimi doğruluğu; 0 yazma-güvenlik ihlali; 0 leakage.
+- PR-18 (`882f958`): açık “aynı proje/bu cari” bağlamı, sessiz miras alma
+  engeli ve uygulanabilir eksik alan soruları. Bağlam katmanı salt okuma/
+  çözümlemedir; Excel/SQLite'a doğrudan yazmaz.
+
+PR-18 yerel izole tam suite: **515 geçti, 8 atlandı, 362 alt test**.
+Odaklı PR-18 suite: **12 geçti, 2 alt test**. Atlamalar yalnızca sentetik
+olmayan opt-in üretim DB kopyası ve Chromium/ortam bağımlılığıdır; başarısızlık
+gizlenmedi. PR-18 push ve PR workflow'ları (`39265245135`, `39265252885`) ile
+birleşme sonrası main CI (`39266214714`) Ubuntu, Windows, dependency audit ve
+secret/path taramalarında **PASS** oldu. Önceki `39261837908` Windows başarısızlığı
+aynı bilinen Playwright kapanış yarışıdır ve sonraki yeşil main CI ile geçersiz
+kılınmıştır.
+
+### Güncellenmiş doğrulanmış skor
+
+| Alan | Ağırlık | Doğrulanmış skor |
+|---|---:|---:|
+| Finansal doğruluk | 20% | 19/20 |
+| İşlem bütünlüğü | 20% | 19/20 |
+| Güvenlik | 15% | 14/15 |
+| Backup ve recovery | 15% | 15/15 |
+| Test ve CI | 10% | 10/10 |
+| CFO işlevleri | 10% | 9/10 |
+| Kullanıcı deneyimi | 5% | 4/5 |
+| Operasyon | 5% | 3/5 |
+| **Toplam** | **100%** | **93/100 = 9.3/10** |
+
+9.3/10, yalnızca sentetik, izole ve CI ile kanıtlanan mühendislik skorudur.
+Gerçek Ollama/Qwen inference kalitesi, Excel masaüstü/OneDrive paylaşım kilidi,
+off-site KMS anahtar sahipliği, canlı migration/restore, owner politika onayı
+ve kontrollü üretim dağıtımı hâlâ **NOT VERIFIED** olduğundan final karar
+**NOT_FULLY_VERIFIED** olarak kalır.

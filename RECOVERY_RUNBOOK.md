@@ -137,6 +137,14 @@ ve rollback onayı değildir.
 onayı, off-site hesap kurulumu, restore yetkilisi, gerçek Windows/Excel ve
 OneDrive test ortamı. Hiçbiri bu çalışmada etkinleştirilmedi.
 
+## Güncel CI ve release sınırı (2026-10-19)
+
+Ana dal `882f958c5ff5a5b6aeff3473d2fb075f2a008720` için post-merge CI
+`39266214714` PASS'tir. Bu yalnız kodun sentetik CI kabulüdür. Recovery Vault,
+KMS anahtar sahipliği, gerçek off-site hesap, Excel desktop/OneDrive ve canlı
+restore için owner onayı ve ayrı izole Windows provası zorunludur; bu runbook
+üretimde recovery veya restore çalıştırmaz.
+
 ## PR-15 final acceptance
 
 `tests/test_finance_v2_final_acceptance.py` son finans işleminin encrypted

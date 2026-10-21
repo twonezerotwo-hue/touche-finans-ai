@@ -94,6 +94,14 @@ Gerçek sağlayıcı güvenlik politikası, immutable retention, TLS/IAM, key es
 OneDrive ve Excel desktop davranışı **PRODUCTION_NOT_VERIFIED**; owner onayı
 gereken KMS/escrow/restore işlemleri **OWNER_APPROVAL_REQUIRED** durumundadır.
 
+## Güncel kanıt eki (2026-10-19)
+
+PR-18 konuşma bağlamı istemciden gelse bile yalnız açık “aynı proje/bu cari”
+gönderimiyle kullanılır; değerler katalogla yeniden çözülür ve katman finansal
+yazma yapmaz. PR-18 CI (`39265252885`) ve post-merge main CI (`39266214714`)
+secret/path taraması ile yetki sınırlarını geçmiştir. Gerçek Tailscale/proxy,
+OS hesabı, KMS/escrow ve üretim kimlik sağlayıcısı **NOT VERIFIED** kalır.
+
 ## PR-15 final security acceptance
 
 Sentetik kabul paketi invalid approval token, bozuk vault, read-only corpus
